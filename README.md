@@ -156,21 +156,37 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 
 ## Quick Start
 
-Inside the Git repo you want to review:
+### Claude Code
+
+```bash
+/plugin marketplace add AgentBuildersApp/eight-eyes
+/plugin install eight-eyes@eight-eyes-marketplace
+```
+
+### GitHub Copilot CLI
+
+```bash
+copilot plugin marketplace add AgentBuildersApp/eight-eyes
+copilot plugin install eight-eyes@eight-eyes-marketplace
+```
+
+### OpenAI Codex CLI
 
 ```bash
 git clone https://github.com/AgentBuildersApp/eight-eyes.git
 cd eight-eyes
-python3 install.py
-```
-
-The installer detects which platforms are available and sets up the right adapter. To target a single platform:
-
-```bash
-python3 install.py --platform claude_code
-python3 install.py --platform copilot_cli
 python3 install.py --platform codex_cli
 ```
+
+### Manual install (all platforms)
+
+```bash
+git clone https://github.com/AgentBuildersApp/eight-eyes.git
+cd eight-eyes
+python3 install.py          # auto-detects installed platforms
+```
+
+---
 
 Then, from your project directory:
 
