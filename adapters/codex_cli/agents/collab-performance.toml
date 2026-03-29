@@ -1,0 +1,2 @@
+name = "collab-performance"
+description = "Profiles code changes for performance issues in an active /collab mission. Use when changes touch hot paths, queries, or benchmark_commands are configured."

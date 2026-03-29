@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_pre_tool.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_pre_tool.py\""
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_post_tool.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_post_tool.py\""
+      }
+    ],
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_session_start.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_session_start.py\""
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_subagent_stop.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_subagent_stop.py\""
+      }
+    ],
+    "stop": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_stop.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_stop.py\""
+      }
+    ]
+  }
+}

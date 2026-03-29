@@ -1,0 +1,36 @@
+{
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "command": [
+        "python3",
+        "hooks/scripts/collab_pre_tool.py"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "event": "PostToolUse",
+      "command": [
+        "python3",
+        "hooks/scripts/collab_post_tool.py"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "event": "SessionStart",
+      "command": [
+        "python3",
+        "hooks/scripts/collab_session_start.py"
+      ],
+      "timeout_ms": 30000
+    },
+    {
+      "event": "Stop",
+      "command": [
+        "python3",
+        "hooks/scripts/collab_stop.py"
+      ],
+      "timeout_ms": 30000
+    }
+  ]
+}
