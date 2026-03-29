@@ -1,5 +1,5 @@
 {
-  "name": "eight-eyes-marketplace",
+  "name": "8eyes-marketplace",
   "owner": {
     "name": "AgentBuildersApp",
     "email": "team@agentbuildersapp.com"
@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "eight-eyes",
+      "name": "8eyes",
       "source": "./",
       "description": "Multi-agent code review with 8 hook-enforced roles. Parallel audit, TDD mode, custom roles, blind skeptic review.",
       "version": "3.0.0",
