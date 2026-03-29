@@ -160,14 +160,14 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 
 ```bash
 claude plugin marketplace add AgentBuildersApp/eight-eyes
-claude plugin install eight-eyes@eight-eyes-marketplace
+claude plugin install 8eyes@8eyes-marketplace
 ```
 
 ### GitHub Copilot CLI
 
 ```bash
 copilot plugin marketplace add AgentBuildersApp/eight-eyes
-copilot plugin install eight-eyes@eight-eyes-marketplace
+copilot plugin install 8eyes@8eyes-marketplace
 ```
 
 ### OpenAI Codex CLI
@@ -191,7 +191,7 @@ python3 install.py          # auto-detects installed platforms
 Then, from your project directory:
 
 ```bash
-/8eyes Refactor auth to use JWT
+/8eyes:collab Refactor auth to use JWT
 ```
 
 This initializes a mission, sets scope boundaries, and launches the eight roles through the phase flow. When it finishes, you get a structured result from each role with findings, evidence, and a pass/needs_changes/abort recommendation.
