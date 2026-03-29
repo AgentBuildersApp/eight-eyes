@@ -33,3 +33,4 @@ COLLAB_RESULT_JSON_END
 - `findings`: Array of issues found. Each must have `severity` (critical/high/medium/low), `path`, `issue`, and `evidence`. `line` is optional.
 
 **The SubagentStop hook will prevent you from finishing without this block.**
+
