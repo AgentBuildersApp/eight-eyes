@@ -20,9 +20,24 @@
       "homepage": "https://github.com/AgentBuildersApp/eight-eyes",
       "repository": "https://github.com/AgentBuildersApp/eight-eyes",
       "license": "MIT",
-      "keywords": ["code-review", "multi-agent", "security", "testing", "accessibility", "tdd", "blind-review"],
+      "keywords": [
+        "code-review",
+        "multi-agent",
+        "security",
+        "testing",
+        "accessibility",
+        "tdd",
+        "blind-review"
+      ],
       "category": "code-quality",
-      "tags": ["review", "security-audit", "performance", "accessibility", "documentation"]
+      "tags": [
+        "review",
+        "security-audit",
+        "performance",
+        "accessibility",
+        "documentation"
+      ]
     }
-  ]
+  ],
+  "_description": "Marketplace discovery metadata"
 }
