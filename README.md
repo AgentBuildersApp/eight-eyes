@@ -159,8 +159,8 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 ### Claude Code
 
 ```bash
-/plugin marketplace add AgentBuildersApp/eight-eyes
-/plugin install eight-eyes@eight-eyes-marketplace
+claude plugin marketplace add AgentBuildersApp/eight-eyes
+claude plugin install eight-eyes@eight-eyes-marketplace
 ```
 
 ### GitHub Copilot CLI

@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "eight-eyes",
-      "source": ".",
+      "source": "./",
       "description": "Multi-agent code review with 8 hook-enforced roles. Parallel audit, TDD mode, custom roles, blind skeptic review.",
       "version": "3.0.0",
       "author": {
