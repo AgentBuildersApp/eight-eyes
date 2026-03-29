@@ -1,3 +1,8 @@
+---
+name: 8eyes-copilot
+description: Start a multi-agent review mission (Copilot CLI adapter notes)
+---
+
 # /8eyes for Copilot CLI
 
 Future adapter note for `adapters/copilot_cli/plugin.json`:
