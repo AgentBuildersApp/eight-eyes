@@ -166,3 +166,4 @@ with this schema:
    the 4 review agents together and wait for all 4 result files.
 5. After all phases complete, run `collabctl close pass` (or `abort`).
 6. Report the mission summary to the user.
+
