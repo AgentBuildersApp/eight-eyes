@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.egg-info/
+dist/
+build/
+.git/claude-collab/
+
+# Internal work — NEVER publish
+.internal/
+COLLAB_*_RESPONSE.md
+COLLAB_*_V3_RESPONSE.md
+*.plan.md
+plans/
+.claude/plans/
+.tmp-tests/
+.pytest_cache/

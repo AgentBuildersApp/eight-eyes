@@ -1,0 +1,16 @@
+{
+  "name": "eight-eyes",
+  "version": "3.0.0",
+  "description": "Failure-aware multi-agent code review with 8 hook-enforced roles. Works on Claude Code, Copilot CLI, and Codex CLI.",
+  "author": "AgentBuildersApp",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "multi-agent",
+    "security",
+    "testing",
+    "accessibility",
+    "tdd"
+  ],
+  "homepage": "https://github.com/AgentBuildersApp/eight-eyes"
+}
