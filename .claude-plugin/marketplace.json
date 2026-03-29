@@ -1,0 +1,28 @@
+{
+  "name": "eight-eyes-marketplace",
+  "owner": {
+    "name": "AgentBuildersApp",
+    "email": "team@agentbuildersapp.com"
+  },
+  "metadata": {
+    "description": "Multi-agent code review for Claude Code, Copilot CLI, and Codex CLI",
+    "version": "3.0.0"
+  },
+  "plugins": [
+    {
+      "name": "eight-eyes",
+      "source": ".",
+      "description": "Multi-agent code review with 8 hook-enforced roles. Parallel audit, TDD mode, custom roles, blind skeptic review.",
+      "version": "3.0.0",
+      "author": {
+        "name": "AgentBuildersApp"
+      },
+      "homepage": "https://github.com/AgentBuildersApp/eight-eyes",
+      "repository": "https://github.com/AgentBuildersApp/eight-eyes",
+      "license": "MIT",
+      "keywords": ["code-review", "multi-agent", "security", "testing", "accessibility", "tdd", "blind-review"],
+      "category": "code-quality",
+      "tags": ["review", "security-audit", "performance", "accessibility", "documentation"]
+    }
+  ]
+}
