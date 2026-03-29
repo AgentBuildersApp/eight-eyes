@@ -1,5 +1,60 @@
 # Changelog
 
+## 4.0.0 - 2026-03-29
+
+### Observability
+
+- Added `role_dispatched` and `role_completed` lifecycle events to the NDJSON ledger with timing, model identity, and finding counts.
+- Added `collabctl timeline` command showing a chronological role-by-role table with phase, model, status, duration, and findings.
+- Added `collabctl report` command producing a consolidated mission report with verdict, severity-grouped findings, and hook health.
+- Enhanced `collabctl status` to show model, duration, and distinguish "running" from "pending" roles.
+- All hook `_fail_open` handlers now attempt a `hook_error` ledger write (double-defense pattern) before failing open.
+
+### Multi-Model Routing
+
+- Added `model_map` manifest field and `--model-map` / `--default-model` CLI flags for per-role model backend selection.
+- Model identity is recorded in `role_assignments` and displayed in timeline, report, and status output.
+
+### Security
+
+- Removed generic `awk` from `READ_ONLY_BASH_PATTERNS` and tightened `sed` to print-only commands (`sed -n '<N>p'`, `sed -n '/<pat>/p'`).
+- Changed all `except BaseException` to `except Exception` across all 7 hook scripts, preventing `SystemExit(0)` from hitting the error logger.
+- Audit roles (skeptic, security, performance, accessibility) are now mandatory before the `verify` phase transition. Use `--skip-role` to explicitly skip with validation.
+- Tightened result validation: `severity` and `issue` required per finding for skeptic and reviewer roles; `evidence` required for verifier criteria.
+- Added `--force` audit trail logged to both ledger and progress.md.
+- `--skip-role` validated against actual audit role names only.
+- Unrecognized `collab-*` agent types are now denied (fail-closed) instead of allowed through.
+- Added opt-in `--fail-closed` mode for security-critical deployments.
+
+### Defense-in-Depth (Cross-Platform)
+
+- Added PostToolUse compensating revert: read-only roles that write files have those writes automatically reverted via `git checkout` (tracked) or `unlink` (untracked).
+- Added close-time scope verification: `collabctl close pass` checks `git diff` against allowed paths and blocks on violations. Override with `--force-close <reason>`.
+- Git baseline captured at `collabctl init` for accurate close-time comparison.
+
+### Performance
+
+- Wrapped manifest read-modify-write in `file_lock` in both `collab_subagent_start.py` and `collab_subagent_stop.py` to prevent concurrent update races.
+
+### Accessibility
+
+- Timeline table fits within 80 columns.
+- Report findings include severity labels.
+- "No active mission" messages now suggest running `collabctl init`.
+
+### Platform Fixes
+
+- Added missing `subagentStart` hook to Copilot CLI adapter.
+- Codex CLI positioned as experimental with documented limitations section.
+
+### Schema
+
+- Schema v3 to v4 migration is backward-compatible via additive `setdefault()`. New fields: `model_map`, `phase_started_at`, `role_assignments`, `planned_roles`, `skipped_roles`, `fail_closed`, `git_baseline`.
+
+### Tests
+
+- 98 to 130 tests (32 new tests covering all v4 features).
+
 ## 3.0.0 - 2026-03-28
 
 ### Wave 0: State-Model Hardening
@@ -30,7 +85,7 @@
 - Added Copilot CLI and Codex CLI adapters.
 - Added the cross-platform `install.py` installer and expanded `collabctl verify` to cover adapters and installer layout.
 
-### Wave 5: Marketing-Grade Docs and Distribution
+### Wave 5: Public Documentation and Distribution
 
 - Rewrote the public README around the v3 mission model, platform quickstarts, and hook-enforced architecture.
 - Added `CONTRIBUTING.md` and `docs/MIGRATION.md`.

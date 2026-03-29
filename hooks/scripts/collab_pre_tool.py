@@ -64,10 +64,23 @@ def _custom_role_bash_policy(role_config: dict, manifest: dict) -> str:
     return "read-only"
 
 
-def _fail_open(exc: BaseException) -> int:
-    """Log hook failures and always allow the tool call to proceed."""
+def _fail_open(exc: Exception) -> int:
+    """Log hook failures and always allow the tool call to proceed (unless fail-closed)."""
     print(f"[collab] collab_pre_tool hook error: {exc}", file=sys.stderr)
     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    try:
+        from collab_common import load_active_context, append_ledger
+        ctx = load_active_context(Path(".").resolve())
+        if ctx:
+            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+            # Check if fail-closed mode is enabled
+            if ctx.manifest.get("fail_closed"):
+                from collab_common import pretool_deny, print_json
+                print(f"[collab] FAIL-CLOSED: blocking due to hook error", file=sys.stderr)
+                print_json(pretool_deny(f"Hook error in fail-closed mode: {exc}"))
+                return 0
+    except Exception:
+        pass  # Double-defense: if ledger write fails, still fail-open
     return 0
 
 
@@ -76,6 +89,7 @@ def _main() -> int:
         ALL_COLLAB_ROLES,
         READ_ONLY_BASH_PATTERNS,
         READ_ONLY_ROLES,
+        append_ledger,
         approved_a11y_commands,
         approved_benchmark_commands,
         approved_security_commands,
@@ -105,16 +119,20 @@ def _main() -> int:
     role = role_from_agent_type(payload.get("agent_type"))
     custom_role = None
 
-    # Unknown collab-* agent: warn on stderr, allow through
+    # Unknown collab-* agent: deny (fail-closed)
     if role is not None and role not in ALL_COLLAB_ROLES:
         custom_role = custom_role_config(ctx.manifest, role)
         if custom_role is None:
             agent_type = payload.get("agent_type")
-            print(
-                f"[collab] Unrecognized collab agent_type '{agent_type}', "
-                f"skipping scope enforcement",
-                file=sys.stderr,
-            )
+            append_ledger(ctx, {
+                "kind": "unrecognized_agent",
+                "agent_type": agent_type,
+                "tool_use_id": f"unrecognized:{payload.get('tool_use_id', 'unknown')}",
+            })
+            print_json(pretool_deny(
+                f"Unrecognized collab agent type '{agent_type}'. "
+                f"Register as a custom role or use a built-in role name."
+            ))
             return 0
 
     # Not a collab agent at all -- no enforcement
@@ -242,7 +260,7 @@ def _main() -> int:
                 print_json(pretool_deny(
                     "[COLLAB] Skeptic may only run approved read-only review "
                     "commands like git diff, git status, rg, grep, sed -n, "
-                    "awk, cat, head, tail, ls, or find."
+                    "cat, head, tail, ls, or find."
                 ))
                 return 0
 
@@ -372,13 +390,13 @@ def _main() -> int:
 def main() -> int:
     try:
         return _main()
-    except BaseException as exc:
+    except Exception as exc:
         return _fail_open(exc)
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BaseException as exc:
+    except Exception as exc:
         _fail_open(exc)
         raise SystemExit(0)

@@ -19,7 +19,8 @@ Code session.  Run through each step in order.  Every step must pass.
 
 - [ ] Run `/collab Add input validation to the signup form`
 - [ ] Verify `collabctl init` created `.git/claude-collab/manifest.json`
-- [ ] Verify `manifest.json` has `schema_version: 2`
+- [ ] Verify `manifest.json` has `schema_version: 4`
+- [ ] Verify `manifest.json` has `model_map` and `role_assignments` fields
 - [ ] Verify `ledger.ndjson` has a `mission_created` entry
 - [ ] Verify phase is `plan`
 
@@ -151,9 +152,50 @@ Code session.  Run through each step in order.  Every step must pass.
 - [ ] Verify all paths use forward slashes in manifest
 - [ ] Verify worktree creation and cleanup works on NTFS
 
+### 16. Skip-Role Override
+
+- [ ] Initialize a mission with `--skip-role security`
+- [ ] Advance to the verify phase
+- [ ] Verify the mission proceeds without waiting for the security role result
+- [ ] Verify `manifest.skipped_roles` contains `"security"`
+
+### 17. TDD Mode Full Cycle
+
+- [ ] Initialize a mission with `--tdd`
+- [ ] Verify phase transitions follow `plan -> test -> implement` (not `plan -> implement`)
+- [ ] Verify implementer writes are blocked by the PreToolUse hook until a `test-writer` result exists for the current epoch
+
+### 18. Audit Composite Phase
+
+- [ ] Advance to the `audit` phase
+- [ ] Verify all 4 audit roles are dispatched (skeptic, security, performance, accessibility)
+- [ ] Verify the stop hook blocks the session from ending until all 4 audit results exist
+
+### 19. Timeline and Report
+
+- [ ] Run `collabctl timeline` after completing at least one role
+- [ ] Verify output includes dispatch time, completion time, duration, and model per role
+- [ ] Run `collabctl report` after audit phase completes
+- [ ] Verify report consolidates findings from all audit roles
+
+### 20. Close-Time Scope Verification
+
+- [ ] Complete a mission through verify phase
+- [ ] Manually create a file outside `allowed_paths` (e.g., `touch ROGUE.txt`)
+- [ ] Run `collabctl close pass`
+- [ ] Verify close is blocked with a scope violation message
+- [ ] Run `collabctl close pass --force-close "testing scope check"`
+- [ ] Verify mission closes and `force_override` event appears in ledger
+
+### 21. Force Override Logging
+
+- [ ] Use `--force` on a phase transition that would normally be blocked
+- [ ] Verify `force_override` event in ledger with `phase_from` and `phase_to`
+- [ ] Verify `progress.md` records the `--force` usage
+
 ---
 
 ## Result
 
-- [ ] All 15 sections pass: **SMOKE TEST PASSED**
+- [ ] All 21 sections pass: **SMOKE TEST PASSED**
 - [ ] Any section fails: document the failure, file an issue

@@ -21,6 +21,18 @@ python3 scripts/collabctl.py init \
 5. Make sure the role emits a valid result block. Custom roles must include `role`, `summary`, and either `status` or `recommendation`.
 6. Test the change with the full unit suite and `collabctl verify`.
 
+## Code Organization
+
+Shared hook logic lives in `hooks/scripts/core/`.  The four modules there
+handle the bulk of cross-platform enforcement:
+
+- `engine.py` -- manifest loading, phase validation, and lifecycle management
+- `roles.py` -- role definitions, scope rules, and permission checks
+- `paths.py` -- Git common directory resolution and state path helpers
+- `contracts.py` -- result schema validation used by the SubagentStop hook
+
+Platform adapters import from `core/` rather than duplicating logic.
+
 ## Writing a Platform Adapter
 
 1. Create `adapters/<platform>/`.
@@ -35,14 +47,31 @@ python3 scripts/collabctl.py init \
 ## Running Tests
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m pytest tests/ -q
 ```
 
 Before opening a change, also run:
 
 ```bash
-python scripts/collabctl.py --cwd . verify
+python3 scripts/collabctl.py --cwd . verify
 ```
+
+## Defense-in-Depth Layers
+
+Every hook implements a double-defense `_fail_open` pattern. If hook code raises an exception -- missing manifest, malformed JSON, unexpected schema -- the default behavior is to allow the tool call so the session is not bricked by a hook bug. (For security-critical missions, enable `--fail-closed` to deny on error instead -- see Security Considerations below.) The exception is logged as a `hook_error` event in the ledger for post-hoc review.
+
+This means two layers of protection exist for every enforced rule:
+
+1. **PreToolUse** blocks the call before it executes.
+2. **PostToolUse** detects and reverts unauthorized writes after execution (compensating control for read-only roles).
+
+When contributing a new hook or modifying an existing one, wrap the enforcement logic in `_fail_open` and confirm both layers are tested.
+
+## Security Considerations
+
+- **Fail-closed mode**: When `manifest.fail_closed` is `true`, the `PreToolUse` hook denies on error instead of allowing. Use this for security-critical missions where a hook failure should halt work rather than permit unscoped access.
+- **PostToolUse revert**: Read-only roles have a compensating revert. If a write slips past `PreToolUse`, `PostToolUse` restores tracked files via `git checkout` and removes untracked files. The revert is recorded as a `scope_violation_reverted` ledger event.
+- **Close-time scope verification**: `collabctl close` compares the current `git diff` against `allowed_paths` and blocks if out-of-scope files were modified. `--force-close` overrides with a logged reason.
 
 ## Code Quality Standards
 

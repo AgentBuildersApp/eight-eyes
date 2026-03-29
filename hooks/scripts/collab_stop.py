@@ -27,10 +27,17 @@ def mission_timed_out(manifest: dict) -> bool:
         return False
 
 
-def _fail_open(exc: BaseException) -> int:
+def _fail_open(exc: Exception) -> int:
     """Log hook failures and fail open instead of crashing the session."""
     print(f"[collab] collab_stop hook error: {exc}", file=sys.stderr)
     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    try:
+        from collab_common import load_active_context, append_ledger
+        ctx = load_active_context(Path(".").resolve())
+        if ctx:
+            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+    except Exception:
+        pass  # Double-defense: if ledger write fails, still fail-open
     return 0
 
 
@@ -133,13 +140,13 @@ def _main() -> int:
 def main() -> int:
     try:
         return _main()
-    except BaseException as exc:
+    except Exception as exc:
         return _fail_open(exc)
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BaseException as exc:
+    except Exception as exc:
         _fail_open(exc)
         raise SystemExit(0)

@@ -22,6 +22,13 @@
         "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_session_start.py\""
       }
     ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "python3 \"$(dirname \"$0\")/../../hooks/scripts/collab_subagent_start.py\"",
+        "powershell": "python3 \"$PSScriptRoot\\..\\..\\hooks\\scripts\\collab_subagent_start.py\""
+      }
+    ],
     "subagentStop": [
       {
         "type": "command",

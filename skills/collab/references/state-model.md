@@ -39,17 +39,18 @@ worktree checkouts.
 
 ---
 
-## Manifest Schema (v3)
+## Manifest Schema (v4)
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "mission_id": "<uuid>",
   "objective": "<user-provided objective string>",
   "created_at": "<ISO-8601>",
   "updated_at": "<ISO-8601>",
 
   "phase": "<current phase name>",
+  "phase_started_at": "<ISO-8601 or null>",
   "phase_history": [
     {
       "phase": "<phase-name>",
@@ -61,6 +62,25 @@ worktree checkouts.
 
   "roles": ["implementer", "test-writer", "skeptic", "..."],
   "optional_roles": ["security", "performance", "accessibility", "docs"],
+  "planned_roles": ["implementer", "test-writer", "skeptic", "security"],
+  "skipped_roles": [],
+
+  "model_map": {
+    "implementer": "claude-sonnet-4-20250514",
+    "skeptic": "claude-opus-4-20250514",
+    "security": "claude-opus-4-20250514"
+  },
+
+  "role_assignments": {
+    "skeptic": {
+      "started_at": "<ISO-8601>",
+      "completed_at": "<ISO-8601 or null>",
+      "model": "claude-opus-4-20250514",
+      "outcome": "pass | fail | warn | null",
+      "duration_seconds": 42,
+      "finding_count": 3
+    }
+  },
 
   "allowed_paths": [
     "src/**",
@@ -108,6 +128,9 @@ worktree checkouts.
   "awaiting_user": true,
   "awaiting_user_reason": "<string or null>",
 
+  "fail_closed": false,
+  "git_baseline": "<git-status-snapshot-at-init>",
+
   "loop_count": 0,
   "loop_epoch": 0,
   "max_loops": 3,
@@ -121,15 +144,20 @@ worktree checkouts.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_version` | int | Always `3` for this version |
+| `schema_version` | int | Always `4` for this version |
 | `mission_id` | string | UUID v4, generated at init |
 | `objective` | string | The user's original objective text |
 | `created_at` | string | ISO-8601 timestamp of mission creation |
 | `updated_at` | string | ISO-8601 timestamp of last state change |
 | `phase` | string | Current phase name |
+| `phase_started_at` | string\|null | ISO-8601 timestamp of when the current phase began, null before first transition |
 | `phase_history` | array | Ordered list of phase transitions |
 | `roles` | array | Required roles for this mission |
 | `optional_roles` | array | Optional roles the coordinator chose to include |
+| `planned_roles` | array | Roles planned for this mission at init time |
+| `skipped_roles` | array | Roles explicitly skipped via `--skip-role` |
+| `model_map` | object | Per-role model backend selection (e.g., `{"skeptic": "claude-opus-4-20250514"}`) |
+| `role_assignments` | object | Per-role timing, model, outcome, duration, and finding count |
 | `allowed_paths` | array | Glob patterns for implementer write access |
 | `test_paths` | array | Glob patterns for test-writer write access |
 | `doc_paths` | array | Glob patterns for docs role write access |
@@ -145,6 +173,8 @@ worktree checkouts.
 | `loop_count` | int | Global loop-back counter |
 | `loop_epoch` | int | Monotonic epoch incremented on each loop-back |
 | `max_loops` | int | Maximum loops before forced abort |
+| `fail_closed` | bool | When true, hooks deny on error instead of allowing (default false) |
+| `git_baseline` | string | Git status snapshot captured at init for close-time scope verification |
 | `status` | string | Mission status: active, passed, or aborted |
 | `abort_reason` | string | Reason for abort, null if not aborted |
 
@@ -162,8 +192,12 @@ worktree checkouts.
 ### Audit Phase
 
 - `audit` is the recommended composite review phase after `test`.
-- `audit` requires 4 role results for the current epoch before the stop hook
-  will allow the mission to pause or end:
+- Audit roles (skeptic, security, performance, accessibility) are required
+  before the mission can transition to `verify`.  To explicitly skip a role,
+  pass `--skip-role <name>` at init or during the audit phase.  Skipped roles
+  are recorded in `manifest.skipped_roles`.
+- `audit` requires results for all non-skipped audit roles for the current
+  epoch before the stop hook will allow the mission to pause or end:
   - `skeptic.json`
   - `security.json`
   - `performance.json`
@@ -199,7 +233,11 @@ is automatically set to `awaiting_user=true` so the user can intervene.
 
 4. **Closing**: `collabctl close pass` or `collabctl close abort` sets
    `status`, records the final `phase_history` entry, and appends a
-   closing ledger entry.
+   closing ledger entry.  At close time, scope verification compares the
+   current `git diff` against `allowed_paths` to confirm no out-of-scope
+   files were modified.  If violations are found, `close` is blocked.  Use
+   `--force-close` with a reason to override; the override is logged to the
+   ledger and `progress.md`.
 
 5. **Persistence across sessions**: The manifest and ledger persist in
    `.git/claude-collab/`.  A new session picks up from where the last one
@@ -250,15 +288,34 @@ The ledger is a newline-delimited JSON (NDJSON) file.  Each line is a
 self-contained JSON object.
 
 ```json
-{"timestamp":"2026-03-28T10:00:00Z","event":"mission_created","mission_id":"...","objective":"..."}
-{"timestamp":"2026-03-28T10:01:00Z","event":"phase_enter","phase":"plan"}
-{"timestamp":"2026-03-28T10:02:00Z","event":"phase_exit","phase":"plan","result":"pass"}
-{"timestamp":"2026-03-28T10:02:01Z","event":"phase_enter","phase":"implement"}
-{"timestamp":"2026-03-28T10:05:00Z","event":"tool_use","role":"implementer","tool":"Write","target":"src/auth.ts","outcome":"allowed"}
-{"timestamp":"2026-03-28T10:10:00Z","event":"role_complete","role":"implementer","status":"pass"}
-{"timestamp":"2026-03-28T10:10:01Z","event":"phase_exit","phase":"implement","result":"pass"}
-{"timestamp":"2026-03-28T10:30:00Z","event":"mission_closed","status":"passed"}
+{"ts":"2026-03-28T10:00:00Z","kind":"mission_created","mission_id":"...","objective":"..."}
+{"ts":"2026-03-28T10:01:00Z","kind":"phase_enter","phase":"plan"}
+{"ts":"2026-03-28T10:02:00Z","kind":"phase_exit","phase":"plan","result":"pass"}
+{"ts":"2026-03-28T10:02:01Z","kind":"phase_enter","phase":"implement"}
+{"ts":"2026-03-28T10:05:00Z","kind":"tool_use","role":"implementer","tool":"Write","target":"src/auth.ts","outcome":"allowed"}
+{"ts":"2026-03-28T10:08:00Z","kind":"role_dispatched","role":"implementer","phase":"implement","model":"claude-sonnet-4-20250514"}
+{"ts":"2026-03-28T10:10:00Z","kind":"role_completed","role":"implementer","phase":"implement","outcome":"pass","duration_seconds":120,"finding_count":0,"model":"claude-sonnet-4-20250514"}
+{"ts":"2026-03-28T10:10:01Z","kind":"phase_exit","phase":"implement","result":"pass"}
+{"ts":"2026-03-28T10:15:00Z","kind":"hook_error","hook":"collab_pre_tool","error":"FileNotFoundError: manifest.json"}
+{"ts":"2026-03-28T10:20:00Z","kind":"scope_violation_reverted","role":"skeptic","paths":["src/auth.ts"]}
+{"ts":"2026-03-28T10:25:00Z","kind":"force_override","phase_from":"audit","phase_to":"verify"}
+{"ts":"2026-03-28T10:30:00Z","kind":"mission_closed","status":"passed"}
 ```
+
+### Event Reference
+
+| Kind | Fields | Description |
+|------|--------|-------------|
+| `mission_created` | mission_id, objective | Mission initialized |
+| `phase_enter` | phase | Entered a new phase |
+| `phase_exit` | phase, result | Exited a phase with result |
+| `tool_use` | role, tool, target, outcome | Tool call recorded |
+| `role_dispatched` | role, phase, model | Role subagent launched with model identity |
+| `role_completed` | role, phase, outcome, duration_seconds, finding_count, model | Role finished with timing and result data |
+| `hook_error` | hook, error | A hook raised an exception |
+| `scope_violation_reverted` | role, paths | Out-of-scope writes reverted by PostToolUse |
+| `force_override` | phase_from, phase_to | `--force` used to bypass phase rules |
+| `mission_closed` | status | Mission closed as passed or aborted |
 
 The ledger can be trimmed with `collabctl ledger-trim --before <date>` to
 remove old entries and keep the file compact.
