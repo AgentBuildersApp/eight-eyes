@@ -5,17 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from collab_common import (
-    is_active_manifest,
-    load_active_context,
-    load_role_result,
-    print_json,
-    stop_block,
-)
 
 
 def mission_timed_out(manifest: dict) -> bool:
@@ -34,8 +27,23 @@ def mission_timed_out(manifest: dict) -> bool:
         return False
 
 
-def main() -> int:
+def _fail_open(exc: BaseException) -> int:
+    """Log hook failures and fail open instead of crashing the session."""
+    print(f"[collab] collab_stop hook error: {exc}", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    return 0
+
+
+def _main() -> int:
     """Block session exit while mission phases have unfinished work."""
+    from collab_common import (
+        is_active_manifest,
+        load_active_context,
+        load_role_result,
+        print_json,
+        stop_block,
+    )
+
     payload = json.loads(sys.stdin.read() or "{}")
     cwd = Path(payload.get("cwd") or ".").resolve()
     ctx = load_active_context(cwd)
@@ -122,5 +130,16 @@ def main() -> int:
     return 0
 
 
+def main() -> int:
+    try:
+        return _main()
+    except BaseException as exc:
+        return _fail_open(exc)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BaseException as exc:
+        _fail_open(exc)
+        raise SystemExit(0)

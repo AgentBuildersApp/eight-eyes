@@ -4,36 +4,44 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from collab_common import (
-    ALL_COLLAB_ROLES,
-    RESULT_BEGIN,
-    RESULT_END,
-    append_ledger,
-    atomic_write_json,
-    custom_role_config,
-    extract_result_block,
-    is_active_manifest,
-    load_active_context,
-    print_json,
-    role_from_agent_type,
-    save_role_result,
-    stop_block,
-    utc_now,
-    validate_role_result,
-)
-
 
 def save_manifest(ctx) -> None:
     """Persist manifest updates made by the subagent stop hook."""
+    from collab_common import atomic_write_json, utc_now
+
     ctx.manifest["updated_at"] = utc_now()
     atomic_write_json(ctx.manifest_path, ctx.manifest)
 
 
-def main() -> int:
+def _fail_open(exc: BaseException) -> int:
+    """Log hook failures and fail open instead of crashing the session."""
+    print(f"[collab] collab_subagent_stop hook error: {exc}", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    return 0
+
+
+def _main() -> int:
+    from collab_common import (
+        ALL_COLLAB_ROLES,
+        RESULT_BEGIN,
+        RESULT_END,
+        append_ledger,
+        custom_role_config,
+        extract_result_block,
+        is_active_manifest,
+        load_active_context,
+        print_json,
+        role_from_agent_type,
+        save_role_result,
+        stop_block,
+        validate_role_result,
+    )
+
     payload = json.loads(sys.stdin.read() or "{}")
     cwd = Path(payload.get("cwd") or ".").resolve()
     ctx = load_active_context(cwd)
@@ -94,5 +102,16 @@ def main() -> int:
     return 0
 
 
+def main() -> int:
+    try:
+        return _main()
+    except BaseException as exc:
+        return _fail_open(exc)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BaseException as exc:
+        _fail_open(exc)
+        raise SystemExit(0)

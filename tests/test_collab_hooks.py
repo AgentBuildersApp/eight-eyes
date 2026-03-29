@@ -88,6 +88,18 @@ class CollabHookTests(unittest.TestCase):
         )
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
+    def run_hook_stdin(self, script_name: str, raw_input: str, cwd: Path | None = None) -> tuple[int, str, str]:
+        """Run a hook script with raw stdin instead of JSON-encoding the payload."""
+        script = HOOKS_DIR / script_name
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            input=raw_input,
+            text=True,
+            capture_output=True,
+            cwd=str(cwd or self.repo),
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
     def hook_json(self, script_name: str, payload: dict, cwd: Path | None = None):
         """Run a hook and parse JSON output. Returns None if no output."""
         rc, out, err = self.run_hook(script_name, payload, cwd=cwd)
@@ -1558,13 +1570,26 @@ class CollabHookTests(unittest.TestCase):
         self.assertIn("Custom approved commands: eslint src/", text)
 
     def test_89_8eyes_command_exists(self):
-        """commands/8eyes.md exists with correct frontmatter."""
+        """commands/8eyes.md is an explicit orchestrator workflow."""
         command_path = PLUGIN_ROOT / "commands" / "8eyes.md"
         self.assertTrue(command_path.exists())
         text = command_path.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("---\n"))
         self.assertIn("name: 8eyes", text)
         self.assertIn("description: Start a failure-aware multi-agent code review mission", text)
+        self.assertIn("disable-model-invocation: false", text)
+        self.assertIn("FIRST ACTION: run this via the Bash tool", text)
+        self.assertIn("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/collabctl.py init --objective \"$ARGUMENTS\"", text)
+        self.assertIn("WAIT for explicit user approval", text)
+        self.assertIn("collab-implementer", text)
+        self.assertIn("collab-test-writer", text)
+        self.assertIn("collab-skeptic", text)
+        self.assertIn("collab-security", text)
+        self.assertIn("collab-performance", text)
+        self.assertIn("collab-accessibility", text)
+        self.assertIn("collab-verifier", text)
+        self.assertIn("After EACH role completes, show", text)
+        self.assertIn("needs_changes", text)
 
     def test_90_collabctl_verify_checks_8eyes(self):
         """collabctl verify checks for commands/8eyes.md."""
@@ -1655,6 +1680,54 @@ class CollabHookTests(unittest.TestCase):
         self.assertIn("adapters/codex_cli/AGENTS.md", proc.stdout)
         self.assertIn("Cross-platform installer", proc.stdout)
         self.assertIn("install.py", proc.stdout)
+
+    def test_97_collabctl_status_summarizes_roles(self):
+        """collabctl status shows mission metadata and per-role progress details."""
+        self.init_mission()
+        self.set_phase("audit")
+
+        implementer = self.valid_role_result("implementer")
+        implementer["summary"] = "Implemented the requested change."
+        self.save_role_result("implementer", implementer)
+
+        skeptic = self.valid_role_result("skeptic")
+        skeptic["recommendation"] = "needs_changes"
+        skeptic["summary"] = "Reviewed the change.\nFound a missing guard clause."
+        skeptic["findings"] = [
+            {"category": "bug", "summary": "Null check missing on the auth path."},
+            {"category": "risk", "summary": "No regression coverage for the fallback branch."},
+        ]
+        self.save_role_result("skeptic", skeptic)
+
+        text = self.run_ctl("status").stdout
+        self.assertIn("Mission ID:", text)
+        self.assertIn("Objective: Implement a safe change", text)
+        self.assertIn("Current phase: audit", text)
+        self.assertIn("Elapsed:", text)
+        self.assertIn("- implementer: complete", text)
+        self.assertIn("recommendation: complete", text)
+        self.assertIn("Implemented the requested change.", text)
+        self.assertIn("- skeptic: failed", text)
+        self.assertIn("recommendation: needs_changes", text)
+        self.assertIn("Reviewed the change.", text)
+        self.assertIn("Found a missing guard clause.", text)
+        self.assertIn("- test-writer: pending", text)
+
+    def test_98_hooks_fail_open_on_invalid_json(self):
+        """All hook entrypoints log invalid JSON but never exit non-zero."""
+        for script_name in (
+            "collab_pre_tool.py",
+            "collab_post_tool.py",
+            "collab_session_start.py",
+            "collab_subagent_start.py",
+            "collab_subagent_stop.py",
+            "collab_stop.py",
+            "collab_pre_compact.py",
+        ):
+            rc, out, err = self.run_hook_stdin(script_name, "{not-json")
+            self.assertEqual(rc, 0, msg=f"{script_name} exited non-zero: {err}")
+            self.assertEqual(out, "")
+            self.assertIn("hook error", err)
 
 
 if __name__ == "__main__":

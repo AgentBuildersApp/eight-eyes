@@ -4,21 +4,10 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from collab_common import (
-    ALL_COLLAB_ROLES,
-    DEFAULT_DETAIL_LEVELS,
-    build_subagent_context,
-    custom_role_config,
-    hook_context,
-    is_active_manifest,
-    load_active_context,
-    print_json,
-    role_from_agent_type,
-)
 
 REVIEW_CONTEXT_ROLES = {"skeptic", "security", "verifier"}
 
@@ -39,8 +28,27 @@ def review_md_context(ctx, role: str) -> str:
     return "\n\nREVIEW.md:\n" + review_text[:2000]
 
 
-def main() -> int:
+def _fail_open(exc: BaseException) -> int:
+    """Log hook failures and fail open instead of crashing the session."""
+    print(f"[collab] collab_subagent_start hook error: {exc}", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    return 0
+
+
+def _main() -> int:
     """Inject role-specific mission context into the SubagentStart hook."""
+    from collab_common import (
+        ALL_COLLAB_ROLES,
+        DEFAULT_DETAIL_LEVELS,
+        build_subagent_context,
+        custom_role_config,
+        hook_context,
+        is_active_manifest,
+        load_active_context,
+        print_json,
+        role_from_agent_type,
+    )
+
     payload = json.loads(sys.stdin.read() or "{}")
     cwd = Path(payload.get("cwd") or ".").resolve()
     ctx = load_active_context(cwd)
@@ -61,5 +69,16 @@ def main() -> int:
     return 0
 
 
+def main() -> int:
+    try:
+        return _main()
+    except BaseException as exc:
+        return _fail_open(exc)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BaseException as exc:
+        _fail_open(exc)
+        raise SystemExit(0)

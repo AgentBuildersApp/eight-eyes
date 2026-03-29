@@ -9,6 +9,7 @@ Usage:
 Commands:
     init        Create a new mission
     show        Display active mission state (JSON)
+    status      Display active mission progress (text)
     phase       Advance to a phase
     progress    Append a progress message
     close       Close mission as pass or abort
@@ -19,6 +20,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import sys
 from pathlib import Path
@@ -31,7 +33,10 @@ from collab_common import (  # noqa: E402
     CUSTOM_ROLE_SCOPE_TYPES,
     active_pointer_path,
     atomic_write_json,
+    is_active_manifest,
+    load_active_context,
     load_json,
+    load_role_result,
     resolve_git_common_dir,
     resolve_worktree_root,
     spec_hash,
@@ -77,6 +82,17 @@ LEGAL_TRANSITIONS_TDD = {
 DEFAULT_TEST_PATHS = ["tests/", "test/", "__tests__/"]
 DEFAULT_DOC_PATHS = ["docs/", "README.md", "CHANGELOG.md"]
 DEFAULT_DENIED_PATHS = [".git", ".env", "secrets", "node_modules"]
+ROLE_STATUS_ORDER = [
+    "implementer",
+    "test-writer",
+    "skeptic",
+    "security",
+    "performance",
+    "accessibility",
+    "verifier",
+    "docs",
+]
+FAILED_ROLE_OUTCOMES = {"abort", "blocked", "fail", "failed", "needs_changes"}
 
 
 def state_root(cwd: Path) -> Path:
@@ -188,6 +204,150 @@ def parse_custom_role(raw: str) -> dict[str, object]:
     return role_config
 
 
+def _parse_timestamp(value: object) -> datetime | None:
+    """Parse an ISO-8601 timestamp, returning None on failure."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _format_elapsed(created_at: object) -> str:
+    """Format mission elapsed time as a compact human-readable duration."""
+    created = _parse_timestamp(created_at)
+    if created is None:
+        return "unknown"
+
+    total_seconds = max(0, int((datetime.now(timezone.utc) - created).total_seconds()))
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or parts:
+        parts.append(f"{hours}h")
+    if minutes or parts:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def _result_outcome(result: dict[str, object] | None) -> str:
+    """Return the canonical status or recommendation string for a role result."""
+    if not isinstance(result, dict):
+        return ""
+    outcome = result.get("recommendation") or result.get("status") or ""
+    return str(outcome).strip()
+
+
+def _result_status(result: dict[str, object] | None) -> str:
+    """Map a result object to the requested pending/complete/failed state."""
+    if not isinstance(result, dict):
+        return "pending"
+    if _result_outcome(result).lower() in FAILED_ROLE_OUTCOMES:
+        return "failed"
+    return "complete"
+
+
+def _stringify_detail(item: object) -> str:
+    """Format a compact detail line for status output."""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        criterion = str(item.get("criterion") or "").strip()
+        status = str(item.get("status") or "").strip()
+        category = str(item.get("category") or "").strip()
+        summary = str(
+            item.get("summary")
+            or item.get("title")
+            or item.get("finding")
+            or item.get("detail")
+            or item.get("message")
+            or item.get("issue")
+            or ""
+        ).strip()
+        if criterion:
+            return f"{criterion}: {status or 'unknown'}"
+        if category and summary:
+            return f"{category}: {summary}"
+        if summary:
+            return summary
+        if category:
+            return category
+        return json.dumps(item, ensure_ascii=False, sort_keys=True)
+    return str(item).strip()
+
+
+def _role_summary_lines(result: dict[str, object] | None) -> list[str]:
+    """Return at most two compact summary lines for a role result."""
+    if not isinstance(result, dict):
+        return []
+
+    candidates: list[str] = []
+
+    summary = result.get("summary")
+    if isinstance(summary, str):
+        candidates.extend(line.strip() for line in summary.splitlines() if line.strip())
+
+    findings = result.get("findings")
+    if isinstance(findings, list):
+        candidates.extend(_stringify_detail(item) for item in findings)
+
+    criteria_results = result.get("criteria_results")
+    if isinstance(criteria_results, list):
+        candidates.extend(_stringify_detail(item) for item in criteria_results)
+
+    list_fields = [
+        ("changed_paths", "Changed paths"),
+        ("test_files_created", "Test files"),
+        ("coverage_targets", "Coverage targets"),
+        ("tests_run", "Tests"),
+        ("scan_commands_run", "Scans"),
+        ("benchmarks_run", "Benchmarks"),
+        ("a11y_commands_run", "A11y"),
+        ("docs_updated", "Docs updated"),
+        ("docs_created", "Docs created"),
+    ]
+    for key, label in list_fields:
+        value = result.get(key)
+        if isinstance(value, list) and value:
+            preview = ", ".join(str(item) for item in value[:3])
+            candidates.append(f"{label}: {preview}")
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        cleaned = item.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        unique.append(cleaned)
+        if len(unique) == 2:
+            break
+    return unique
+
+
+def _role_names_for_status(manifest: dict) -> list[str]:
+    """Return built-in roles followed by any manifest-defined custom roles."""
+    roles = list(ROLE_STATUS_ORDER)
+    seen = set(roles)
+    for item in manifest.get("custom_roles", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name and name not in seen:
+            roles.append(name)
+            seen.add(name)
+    return roles
+
+
 # ── Commands ──
 
 
@@ -296,6 +456,36 @@ def cmd_show(args):
             "results_dir": str(mdir / "results"),
         },
     }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_status(args):
+    """Display a compact text summary of the active mission and role results."""
+    cwd = Path(args.cwd or ".").resolve()
+    ctx = load_active_context(cwd)
+    if not ctx or not is_active_manifest(ctx.manifest):
+        print("No active /collab mission.")
+        return 0
+
+    manifest = ctx.manifest
+    lines = [
+        f"Mission ID: {ctx.mission_id}",
+        f"Objective: {manifest.get('objective', '')}",
+        f"Current phase: {manifest.get('phase', 'unknown')}",
+        f"Elapsed: {_format_elapsed(manifest.get('created_at'))}",
+        "Roles:",
+    ]
+
+    for role in _role_names_for_status(manifest):
+        result = load_role_result(ctx, role)
+        lines.append(f"- {role}: {_result_status(result)}")
+        outcome = _result_outcome(result)
+        if outcome:
+            lines.append(f"  recommendation: {outcome}")
+        for detail in _role_summary_lines(result):
+            lines.append(f"  {detail}")
+
+    print("\n".join(lines))
     return 0
 
 
@@ -558,6 +748,10 @@ def build_parser():
     # show
     show = sub.add_parser("show", help="Display active mission state")
     show.set_defaults(func=cmd_show)
+
+    # status
+    status = sub.add_parser("status", help="Display active mission progress")
+    status.set_defaults(func=cmd_status)
 
     # phase
     phase = sub.add_parser("phase", help="Advance to a phase")

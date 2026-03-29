@@ -3,14 +3,22 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from collab_common import atomic_write_json, load_active_context, utc_now
+
+def _fail_open(exc: BaseException) -> int:
+    """Log hook failures and fail open instead of crashing the session."""
+    print(f"[collab] collab_pre_compact hook error: {exc}", file=sys.stderr)
+    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    return 0
 
 
-def main() -> int:
+def _main() -> int:
+    from collab_common import atomic_write_json, load_active_context, utc_now
+
     payload = json.loads(sys.stdin.read() or "{}")
     cwd = Path(payload.get("cwd") or ".").resolve()
     ctx = load_active_context(cwd)
@@ -41,5 +49,16 @@ def main() -> int:
     return 0
 
 
+def main() -> int:
+    try:
+        return _main()
+    except BaseException as exc:
+        return _fail_open(exc)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BaseException as exc:
+        _fail_open(exc)
+        raise SystemExit(0)
