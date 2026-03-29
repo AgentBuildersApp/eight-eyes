@@ -16,5 +16,6 @@
   "skills": [
     "skills/collab"
   ],
-  "hooks": "hooks.json"
+  "hooks": "hooks.json",
+  "_description": "Copilot CLI adapter manifest"
 }
