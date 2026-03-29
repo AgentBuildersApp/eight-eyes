@@ -228,6 +228,7 @@ def _validate_reviewer_role(
         return False, f"{role} recommendation must be approve, needs_changes, or abort"
     if not isinstance(result.get("findings"), list):
         return False, f"{role} findings must be a list"
+    _VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
     for idx, finding in enumerate(result["findings"]):
         if not isinstance(finding, dict):
             return False, f"{role} findings[{idx}] must be an object"
@@ -236,6 +237,9 @@ def _validate_reviewer_role(
             return False, f"{role} findings[{idx}] must include a non-empty category field"
         if allowed_categories is not None and category not in allowed_categories:
             return False, f"{role} findings[{idx}] category must be one of {sorted(allowed_categories)}"
+        severity = finding.get("severity")
+        if not isinstance(severity, str) or severity.strip() not in _VALID_SEVERITIES:
+            return False, f"{role} findings[{idx}] must include severity (critical/high/medium/low/info)"
     if not isinstance(result.get(required_list_field), list):
         return False, f"{role} {required_list_field} must be a list"
     return True, ""
@@ -309,6 +313,12 @@ def validate_role_result(
             return False, "skeptic recommendation must be approve, needs_changes, or abort"
         if not isinstance(result.get("findings"), list):
             return False, "skeptic findings must be a list"
+        for idx, finding in enumerate(result["findings"]):
+            if not isinstance(finding, dict):
+                return False, f"skeptic findings[{idx}] must be an object"
+            for field in ("severity", "issue"):
+                if not isinstance(finding.get(field), str) or not finding[field].strip():
+                    return False, f"skeptic findings[{idx}] must include a non-empty {field}"
         return True, ""
 
     # Security, performance, and accessibility share a common reviewer schema:
@@ -356,6 +366,9 @@ def validate_role_result(
             seen.add(criterion)
             if status not in {"pass", "fail", "not-run"}:
                 return False, "criterion status must be pass, fail, or not-run"
+            evidence = item.get("evidence")
+            if status in ("pass", "fail") and not isinstance(evidence, (str, list)):
+                return False, f"criterion '{criterion}' with status '{status}' must include evidence"
         return True, ""
 
     if custom_role or custom_role_config(manifest, role):
@@ -367,8 +380,10 @@ def validate_role_result(
 READ_ONLY_BASH_PATTERNS = [
     re.compile(r"^\s*git\s+(status(\s+--short)?|diff\b.*|show\b.*|log\b.*)\s*$"),
     re.compile(r"^\s*(rg|grep|cat|head|tail|ls)\b.*$"),
-    re.compile(r"^\s*sed\s+-n\b.*$"),
-    re.compile(r"^\s*awk\b.*$"),
+    # sed -n: only allow print-line forms; deny w/e/r/R commands inside expressions
+    re.compile(r"^\s*sed\s+-n\s+'[0-9]+p'\s*$"),
+    re.compile(r"^\s*sed\s+-n\s+'/[^']*(?<!/)/p'\s*$"),
+    # awk removed entirely -- system(), getline, print-to-file make safe allowlisting infeasible
     re.compile(r"^\s*find\b(?!.*(-exec|-execdir|-delete|-ok)\b).*$"),
 ]
 

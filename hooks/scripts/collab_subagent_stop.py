@@ -18,10 +18,17 @@ def save_manifest(ctx) -> None:
     atomic_write_json(ctx.manifest_path, ctx.manifest)
 
 
-def _fail_open(exc: BaseException) -> int:
+def _fail_open(exc: Exception) -> int:
     """Log hook failures and fail open instead of crashing the session."""
     print(f"[collab] collab_subagent_stop hook error: {exc}", file=sys.stderr)
     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    try:
+        from collab_common import load_active_context, append_ledger
+        ctx = load_active_context(Path(".").resolve())
+        if ctx:
+            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+    except Exception:
+        pass  # Double-defense: if ledger write fails, still fail-open
     return 0
 
 
@@ -90,13 +97,46 @@ def _main() -> int:
         save_manifest(ctx)
 
     save_role_result(ctx, role, result)
+
+    # Record role completion with timing (under file lock for race safety)
+    from collab_common import atomic_write_json, file_lock, load_json, utc_now
+
+    with file_lock(ctx.mission_dir / ".manifest.lock"):
+        manifest = load_json(ctx.manifest_path, default=ctx.manifest)
+        assignments = manifest.get("role_assignments", {})
+        role_info = assignments.get(role, {})
+        started = role_info.get("started_at")
+        duration = None
+        if started:
+            from datetime import datetime, timezone
+            try:
+                start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                duration = int((datetime.now(timezone.utc) - start_dt).total_seconds())
+            except (ValueError, TypeError):
+                pass
+        role_info["completed_at"] = utc_now()
+        if duration is not None:
+            role_info["duration_seconds"] = duration
+        finding_count = len(result.get("findings", []))
+        role_info["finding_count"] = finding_count
+        role_info["outcome"] = result.get("status") or result.get("recommendation")
+        assignments[role] = role_info
+        manifest["role_assignments"] = assignments
+        atomic_write_json(ctx.manifest_path, manifest)
+        ctx.manifest = manifest
+
     append_ledger(ctx, {
         "mission_id": ctx.mission_id,
         "agent_type": payload.get("agent_type"),
         "tool_name": "RESULT",
         "tool_use_id": f"result:{payload.get('agent_id')}",
-        "kind": "role_result",
+        "kind": "role_completed",
         "role": role,
+        "phase": ctx.manifest.get("phase"),
+        "outcome": role_info["outcome"],
+        "duration_seconds": duration,
+        "finding_count": finding_count,
+        "model": role_info.get("model", "unknown"),
         "status": result.get("status") or result.get("recommendation"),
     })
     return 0
@@ -105,13 +145,13 @@ def _main() -> int:
 def main() -> int:
     try:
         return _main()
-    except BaseException as exc:
+    except Exception as exc:
         return _fail_open(exc)
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BaseException as exc:
+    except Exception as exc:
         _fail_open(exc)
         raise SystemExit(0)

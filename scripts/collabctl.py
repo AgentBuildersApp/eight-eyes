@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """collabctl -- CLI controller for the /collab Claude Code plugin.
 
-Schema v3. 100% stdlib. Cross-platform (Windows / macOS / Linux).
+Schema v4. 100% stdlib. Cross-platform (Windows / macOS / Linux).
 
 Usage:
     python3 ${CLAUDE_PLUGIN_ROOT}/scripts/collabctl.py <command> [options]
@@ -14,6 +14,8 @@ Commands:
     progress    Append a progress message
     close       Close mission as pass or abort
     ledger-trim Trim ledger to N most recent entries
+    timeline    Display role dispatch/completion timeline
+    report      Produce consolidated mission report
     migrate     Migrate mission state to the latest schema
     verify      Verify plugin installation
 """
@@ -32,6 +34,7 @@ sys.path.insert(0, str(_PLUGIN_ROOT / "hooks" / "scripts"))
 from collab_common import (  # noqa: E402
     CUSTOM_ROLE_SCOPE_TYPES,
     active_pointer_path,
+    append_ledger,
     atomic_write_json,
     is_active_manifest,
     load_active_context,
@@ -44,7 +47,7 @@ from collab_common import (  # noqa: E402
     validate_custom_role_name,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 ALL_PHASES = [
     "plan", "implement", "test", "audit", "review",
@@ -58,7 +61,7 @@ LEGAL_TRANSITIONS = {
     "implement": {"test", "review"},  # test is optional, can skip to review
     "test": {"audit", "review"},
     "audit": {"implement", "verify"},
-    "review": {"implement", "security", "performance", "accessibility", "verify"},  # loop back or advance
+    "review": {"implement", "security", "performance", "accessibility"},  # must pass through audit roles before verify
     "security": {"implement", "performance", "accessibility", "verify"},  # loop back or advance
     "performance": {"implement", "accessibility", "verify"},
     "accessibility": {"implement", "verify"},
@@ -71,7 +74,7 @@ LEGAL_TRANSITIONS_TDD = {
     "test": {"implement"},
     "implement": {"audit", "review"},
     "audit": {"test", "verify"},
-    "review": {"test", "security", "performance", "accessibility", "verify"},
+    "review": {"test", "security", "performance", "accessibility"},  # must pass through audit roles before verify
     "security": {"implement", "performance", "accessibility", "verify"},
     "performance": {"implement", "accessibility", "verify"},
     "accessibility": {"implement", "verify"},
@@ -130,6 +133,24 @@ def bool_arg(value: str) -> bool:
 def phase_transitions_for(manifest: dict) -> dict[str, set[str]]:
     """Return the active phase-transition table for the mission manifest."""
     return LEGAL_TRANSITIONS_TDD if manifest.get("tdd_mode") else LEGAL_TRANSITIONS
+
+
+def _parse_model_map(args) -> dict[str, str]:
+    """Combine --model-map JSON with --default-model into a role->model mapping."""
+    model_map: dict[str, str] = {}
+    raw = getattr(args, "model_map", None)
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"invalid --model-map JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise SystemExit("--model-map must be a JSON object")
+        for key, value in parsed.items():
+            model_map[str(key).strip()] = str(value).strip()
+    default_model = getattr(args, "default_model", None) or "claude"
+    model_map.setdefault("default", default_model)
+    return model_map
 
 
 def _cmd_list(raw: list[str] | None) -> list[dict[str, str]]:
@@ -247,13 +268,23 @@ def _result_outcome(result: dict[str, object] | None) -> str:
     return str(outcome).strip()
 
 
-def _result_status(result: dict[str, object] | None) -> str:
-    """Map a result object to the requested pending/complete/failed state."""
-    if not isinstance(result, dict):
-        return "pending"
-    if _result_outcome(result).lower() in FAILED_ROLE_OUTCOMES:
-        return "failed"
-    return "complete"
+def _result_status(
+    result: dict[str, object] | None,
+    role: str = "",
+    manifest: dict | None = None,
+) -> str:
+    """Map a result object to the requested pending/complete/failed/running state."""
+    if isinstance(result, dict):
+        if _result_outcome(result).lower() in FAILED_ROLE_OUTCOMES:
+            return "failed"
+        return "complete"
+    # No result — check if dispatched but not yet complete
+    if manifest:
+        assignments = manifest.get("role_assignments", {})
+        role_info = assignments.get(role, {})
+        if isinstance(role_info, dict) and role_info.get("started_at") and not role_info.get("completed_at"):
+            return "running"
+    return "pending"
 
 
 def _stringify_detail(item: object) -> str:
@@ -399,6 +430,12 @@ def cmd_init(args):
         "tdd_mode": bool(args.tdd),
         "custom_roles": [parse_custom_role(item) for item in (args.custom_role or [])],
         "timeout_hours": args.timeout_hours,
+        "model_map": _parse_model_map(args),
+        "phase_started_at": utc_now(),
+        "role_assignments": {},
+        "planned_roles": list(ROLE_STATUS_ORDER),
+        "skipped_roles": [],
+        "fail_closed": bool(args.fail_closed),
         "role_failure_counts": {},
         "loop_count": 0,
         "loop_epoch": 0,
@@ -406,6 +443,14 @@ def cmd_init(args):
         "created_at": utc_now(),
         "updated_at": utc_now(),
     }
+
+    # Capture git baseline for close-time scope verification
+    import subprocess as _sp
+    baseline_proc = _sp.run(
+        ["git", "status", "--porcelain", "-z"],
+        cwd=str(project_root), capture_output=True, text=True, check=False,
+    )
+    manifest["git_baseline"] = baseline_proc.stdout if baseline_proc.returncode == 0 else ""
 
     if args.dry_run:
         print(json.dumps({
@@ -442,7 +487,7 @@ def cmd_show(args):
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        print("No active /collab mission.")
+        print("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
         return 0
     sroot, mid, mdir, mpath, manifest = loaded
     print(json.dumps({
@@ -464,7 +509,7 @@ def cmd_status(args):
     cwd = Path(args.cwd or ".").resolve()
     ctx = load_active_context(cwd)
     if not ctx or not is_active_manifest(ctx.manifest):
-        print("No active /collab mission.")
+        print("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
         return 0
 
     manifest = ctx.manifest
@@ -476,9 +521,21 @@ def cmd_status(args):
         "Roles:",
     ]
 
+    role_assignments = manifest.get("role_assignments", {})
     for role in _role_names_for_status(manifest):
         result = load_role_result(ctx, role)
-        lines.append(f"- {role}: {_result_status(result)}")
+        assignment = role_assignments.get(role, {})
+        status_str = _result_status(result, role=role, manifest=manifest)
+        extras: list[str] = []
+        model = assignment.get("model")
+        if model:
+            extras.append(f"model={model}")
+        duration = assignment.get("duration_seconds")
+        if duration is not None:
+            mins, secs = divmod(int(duration), 60)
+            extras.append(f"duration={mins}m{secs:02d}s")
+        suffix = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- {role}: {status_str}{suffix}")
         outcome = _result_outcome(result)
         if outcome:
             lines.append(f"  recommendation: {outcome}")
@@ -494,10 +551,23 @@ def cmd_phase(args):
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        raise SystemExit("No active /collab mission.")
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
     _, mid, mdir, mpath, manifest = loaded
 
     current = manifest.get("phase", "plan")
+
+    # --force audit trail
+    if args.force:
+        ctx = load_active_context(cwd)
+        if ctx:
+            append_ledger(ctx, {
+                "kind": "force_override",
+                "phase_from": current,
+                "phase_to": args.phase,
+                "tool_use_id": f"force:{ctx.mission_id}:{args.phase}",
+            })
+        with (mdir / "progress.md").open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(f"- {utc_now()} WARNING: --force used to bypass transition from {current} to {args.phase}\n")
 
     # Enforce legal phase transitions unless --force
     if not args.force:
@@ -506,6 +576,38 @@ def cmd_phase(args):
             raise SystemExit(
                 f"Cannot transition from '{current}' to '{args.phase}'. "
                 f"Allowed: {', '.join(sorted(allowed)) or '(none -- use close pass|abort)'}"
+            )
+
+    # Validate --skip-role values are valid audit roles
+    _VALID_SKIP_ROLES = frozenset({"skeptic", "security", "performance", "accessibility"})
+    for role_name in getattr(args, "skip_role", None) or []:
+        if role_name not in _VALID_SKIP_ROLES:
+            raise SystemExit(f"--skip-role '{role_name}' is not a valid audit role. Valid: {sorted(_VALID_SKIP_ROLES)}")
+
+    # Record any --skip-role values into the manifest
+    for role_name in getattr(args, "skip_role", None) or []:
+        skipped = manifest.setdefault("skipped_roles", [])
+        if role_name not in skipped:
+            skipped.append(role_name)
+
+    # Enforce audit role gate: transitioning to verify requires all four
+    # audit role results to exist or be explicitly skipped via --skip-role.
+    _AUDIT_ROLES = ("security", "performance", "accessibility", "skeptic")
+    if args.phase == "verify" and not args.force:
+        skipped_roles = set(manifest.get("skipped_roles", []))
+        results_dir = mdir / "results"
+        missing: list[str] = []
+        for audit_role in _AUDIT_ROLES:
+            if audit_role in skipped_roles:
+                continue
+            result_path = results_dir / f"{audit_role}.json"
+            if not result_path.exists():
+                missing.append(audit_role)
+        if missing:
+            raise SystemExit(
+                f"Cannot transition to 'verify': audit role results missing for "
+                f"{', '.join(sorted(missing))}. Run those roles first or use "
+                f"--skip-role <role> to explicitly skip."
             )
 
     # Track loops: transitioning back to implement from a review/check phase
@@ -521,6 +623,7 @@ def cmd_phase(args):
             )
 
     manifest["phase"] = args.phase
+    manifest["phase_started_at"] = utc_now()
     if args.awaiting_user is not None:
         manifest["awaiting_user"] = args.awaiting_user
     save_manifest(mpath, manifest)
@@ -535,7 +638,7 @@ def cmd_progress(args):
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        raise SystemExit("No active /collab mission.")
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
     _, mid, mdir, mpath, manifest = loaded
     message = args.message or ""
     if args.message_file:
@@ -549,13 +652,64 @@ def cmd_progress(args):
     return 0
 
 
+def _verify_close_scope(manifest: dict, project_root: Path) -> list[str]:
+    """Check git diff against allowed_paths for scope violations."""
+    import subprocess as _sp
+    proc = _sp.run(
+        ["git", "diff", "--name-only", "HEAD"],
+        cwd=str(project_root), capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    status_proc = _sp.run(
+        ["git", "status", "--porcelain", "-z"],
+        cwd=str(project_root), capture_output=True, text=True, check=False,
+    )
+    changed_files = [f.strip() for f in proc.stdout.splitlines() if f.strip()]
+    if status_proc.returncode == 0 and status_proc.stdout:
+        for entry in status_proc.stdout.split("\0"):
+            entry = entry.strip()
+            if entry and entry[:2].strip() == "??":
+                changed_files.append(entry[3:].strip())
+
+    allowed: set[str] = set()
+    for p in manifest.get("allowed_paths", []):
+        allowed.add(p.rstrip("/"))
+    for p in manifest.get("test_paths", []):
+        allowed.add(p.rstrip("/"))
+    for p in manifest.get("doc_paths", []):
+        allowed.add(p.rstrip("/"))
+
+    if not allowed:
+        return []
+
+    violations = []
+    for f in changed_files:
+        if not any(f.startswith(a) or f == a for a in allowed):
+            violations.append(f)
+    return violations
+
+
 def cmd_close(args):
     """Close the active mission with a terminal pass or abort outcome."""
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        raise SystemExit("No active /collab mission.")
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
     sroot, mid, mdir, mpath, manifest = loaded
+
+    # Close-time scope verification
+    if args.outcome == "pass" and not getattr(args, "force_close", None):
+        violations = _verify_close_scope(manifest, Path(manifest.get("project_root", str(cwd))))
+        if violations:
+            print(f"SCOPE VIOLATIONS DETECTED ({len(violations)} files):")
+            for v in violations:
+                print(f"  - {v}")
+            raise SystemExit(
+                f"Cannot close as pass with {len(violations)} scope violation(s). "
+                f"Use --force-close 'reason' to override."
+            )
+
     manifest["status"] = args.outcome
     manifest["phase"] = args.outcome
     manifest["awaiting_user"] = False
@@ -578,7 +732,7 @@ def cmd_ledger_trim(args):
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        raise SystemExit("No active /collab mission.")
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
     _, mid, mdir, _, _ = loaded
     ledger = mdir / "ledger.ndjson"
     if not ledger.exists():
@@ -674,7 +828,7 @@ def cmd_migrate(args):
     cwd = Path(args.cwd or ".").resolve()
     loaded = load_active(cwd)
     if not loaded:
-        raise SystemExit("No active /collab mission.")
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
     sroot, mid, mdir, mpath, manifest = loaded
 
     current_version = manifest.get("schema_version", 1)
@@ -702,9 +856,161 @@ def cmd_migrate(args):
         manifest.setdefault("role_failure_counts", {})
         manifest.setdefault("loop_epoch", 0)
         manifest["schema_version"] = 3
+        current_version = 3
+
+    if current_version == 3:
+        manifest.setdefault("model_map", {})
+        manifest.setdefault("phase_started_at", None)
+        manifest.setdefault("role_assignments", {})
+        manifest.setdefault("planned_roles", list(ROLE_STATUS_ORDER))
+        manifest.setdefault("skipped_roles", [])
+        manifest.setdefault("fail_closed", False)
+        manifest["schema_version"] = 4
 
     save_manifest(mpath, manifest)
     print(f"{mid}: migrated from schema v{start_version} to v{manifest['schema_version']}")
+    return 0
+
+
+def _format_duration(seconds: int | None) -> str:
+    """Format seconds as M:SS or '-' if None."""
+    if seconds is None:
+        return "-"
+    mins, secs = divmod(int(seconds), 60)
+    return f"{mins}:{secs:02d}"
+
+
+def _format_time_part(iso_ts: str | None) -> str:
+    """Extract HH:MM:SS from an ISO timestamp or return '-'."""
+    if not iso_ts:
+        return "-"
+    parsed = _parse_timestamp(iso_ts)
+    if parsed is None:
+        return "-"
+    return parsed.strftime("%H:%M:%S")
+
+
+def cmd_timeline(args):
+    """Display a timeline of role dispatches and completions."""
+    cwd = Path(args.cwd or ".").resolve()
+    ctx = load_active_context(cwd)
+    if not ctx:
+        print("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
+        return 0
+
+    manifest = ctx.manifest
+    assignments = manifest.get("role_assignments", {})
+    if not assignments:
+        print("No role assignments recorded yet.")
+        return 0
+
+    header = f"{'Phase':<10} {'Role':<17} {'Model':<8} {'Status':<14} {'Start':<8} {'Dur':<8} {'Find'}"
+    print(header)
+    print("-" * len(header))
+
+    # Build rows sorted by started_at
+    rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+    for role, info in assignments.items():
+        if not isinstance(info, dict):
+            continue
+        phase = info.get("phase") or manifest.get("phase", "?")
+        model = info.get("model", "?")
+        outcome = info.get("outcome") or ("complete" if info.get("completed_at") else "running")
+        start = _format_time_part(info.get("started_at"))
+        duration = _format_duration(info.get("duration_seconds"))
+        findings = str(info.get("finding_count", "-"))
+        rows.append((info.get("started_at", ""), phase, role, model, str(outcome), start, duration, findings))
+
+    rows.sort(key=lambda r: r[0])
+    for _, phase, role, model, outcome, start, duration, findings in rows:
+        print(f"{phase:<10} {role:<17} {model:<8} {outcome:<14} {start:<8} {duration:<8} {findings}")
+
+    return 0
+
+
+def cmd_report(args):
+    """Produce a consolidated mission report with verdict and findings."""
+    cwd = Path(args.cwd or ".").resolve()
+    ctx = load_active_context(cwd)
+    if not ctx:
+        print("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
+        return 0
+
+    manifest = ctx.manifest
+    lines: list[str] = []
+    lines.append(f"# Mission Report: {ctx.mission_id}")
+    lines.append(f"Objective: {manifest.get('objective', '')}")
+    lines.append(f"Status: {manifest.get('status', 'unknown')}")
+    lines.append(f"Phase: {manifest.get('phase', 'unknown')}")
+    lines.append(f"Elapsed: {_format_elapsed(manifest.get('created_at'))}")
+    lines.append("")
+
+    # Verdict summary
+    assignments = manifest.get("role_assignments", {})
+    all_outcomes: list[str] = []
+    for role_info in assignments.values():
+        if isinstance(role_info, dict) and role_info.get("outcome"):
+            all_outcomes.append(str(role_info["outcome"]).lower())
+
+    failed = [o for o in all_outcomes if o in FAILED_ROLE_OUTCOMES]
+    if manifest.get("status") == "pass":
+        verdict = "PASS"
+    elif manifest.get("status") == "abort":
+        verdict = "ABORT"
+    elif failed:
+        verdict = "NEEDS_CHANGES"
+    elif all_outcomes:
+        verdict = "IN_PROGRESS"
+    else:
+        verdict = "PENDING"
+
+    lines.append(f"## Verdict: {verdict}")
+    lines.append("")
+
+    # Per-role findings grouped by severity
+    lines.append("## Role Results")
+    for role in _role_names_for_status(manifest):
+        result = load_role_result(ctx, role)
+        assignment = assignments.get(role, {})
+        if not result and not assignment:
+            continue
+        status = _result_status(result, role=role, manifest=manifest)
+        model = assignment.get("model", "?") if assignment else "?"
+        duration = _format_duration(assignment.get("duration_seconds")) if assignment else "-"
+        lines.append(f"### {role} ({status}, model={model}, duration={duration})")
+        findings = result.get("findings", []) if isinstance(result, dict) else []
+        if findings:
+            for finding in findings:
+                severity = finding.get("severity", "?") if isinstance(finding, dict) else "?"
+                detail = _stringify_detail(finding)
+                lines.append(f"  [{severity.upper()}] {detail}")
+        else:
+            lines.append("  (no findings)")
+        lines.append("")
+
+    # Hook health from ledger
+    ledger_path = ctx.mission_dir / "ledger.ndjson"
+    hook_errors = 0
+    if ledger_path.exists():
+        with ledger_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("kind") == "hook_error":
+                    hook_errors += 1
+
+    lines.append("## Hook Health")
+    if hook_errors:
+        lines.append(f"  hook_error events in ledger: {hook_errors}")
+    else:
+        lines.append("  No hook errors recorded.")
+
+    print("\n".join(lines))
     return 0
 
 
@@ -739,6 +1045,9 @@ def build_parser():
     )
     init.add_argument("--tdd", action="store_true", help="Require tests before implementation")
     init.add_argument("--timeout-hours", type=int, default=24, help="Mission timeout in hours (default: 24)")
+    init.add_argument("--model-map", default=None, help='JSON role->model mapping, e.g. \'{"skeptic":"codex","security":"gemini"}\'')
+    init.add_argument("--default-model", default="claude", help="Default model for roles not in model-map (default: claude)")
+    init.add_argument("--fail-closed", action="store_true", default=False, help="Opt-in fail-closed mode for security-critical use")
     init.add_argument("--dry-run", action="store_true", help="Print the mission plan without creating files")
     init.add_argument("--awaiting-user", type=bool_arg, nargs="?", const=True, default=None)
     init.add_argument("--max-loops", type=int, default=3, help="Maximum implement loops (default: 3)")
@@ -757,6 +1066,7 @@ def build_parser():
     phase = sub.add_parser("phase", help="Advance to a phase")
     phase.add_argument("phase", choices=ALL_PHASES)
     phase.add_argument("--awaiting-user", type=bool_arg, nargs="?", const=True, default=None)
+    phase.add_argument("--skip-role", action="append", default=[], help="Skip an audit role when transitioning to verify")
     phase.add_argument("--force", action="store_true", help="Bypass phase transition validation")
     phase.set_defaults(func=cmd_phase)
 
@@ -770,12 +1080,21 @@ def build_parser():
     close = sub.add_parser("close", help="Close mission as pass or abort")
     close.add_argument("outcome", choices=["pass", "abort"])
     close.add_argument("--reason")
+    close.add_argument("--force-close", metavar="REASON", help="Override scope violations with reason")
     close.set_defaults(func=cmd_close)
 
     # ledger-trim
     trim = sub.add_parser("ledger-trim", help="Trim ledger to most recent N entries")
     trim.add_argument("--keep", type=int, default=200)
     trim.set_defaults(func=cmd_ledger_trim)
+
+    # timeline
+    timeline = sub.add_parser("timeline", help="Display role dispatch/completion timeline")
+    timeline.set_defaults(func=cmd_timeline)
+
+    # report
+    report = sub.add_parser("report", help="Produce consolidated mission report")
+    report.set_defaults(func=cmd_report)
 
     # migrate
     migrate = sub.add_parser("migrate", help="Migrate mission state to the latest schema")

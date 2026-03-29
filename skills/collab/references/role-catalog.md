@@ -22,6 +22,7 @@ arguments.
 **Result schema**: Standard result object.  `files_touched` must list every
 file the implementer created or modified.  `status` is `pass` if the
 implementation is complete, `fail` if it could not be completed.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: Always.  Every mission has an `implement` phase.
 
@@ -43,6 +44,7 @@ outside that list are blocked.  All `Bash` calls are blocked.
 
 **Result schema**: Standard result object.  `findings` should list the test
 cases written.  `files_touched` lists the test files created or modified.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: Always.  Every mission has a `test` phase.
 
@@ -61,7 +63,10 @@ cases written.  `files_touched` lists the test files created or modified.
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed only if the command is read-only (e.g., `grep`,
 `cat`, `git log`, `git diff`, `find`, `wc`).  Commands that modify state
-(`rm`, `mv`, `git commit`, `npm install`, etc.) are blocked.
+(`rm`, `mv`, `git commit`, `npm install`, etc.) are blocked.  As a safety
+net, the `PostToolUse` hook performs compensating reverts for any writes
+that slip past the `PreToolUse` check -- tracked files are restored via
+`git checkout` and untracked files are removed.
 
 **Blind review**: The skeptic does NOT receive the implementer's diff or
 commit message in its initial context.  It reads the codebase independently
@@ -69,6 +74,7 @@ and reports issues.  This prevents anchoring bias.
 
 **Result schema**: Standard result object.  `findings` lists issues found.
 `status` is `pass` if no blocking issues, `fail` if blocking issues exist.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: Always.  Every mission has a `review` phase.
 
@@ -87,11 +93,13 @@ and reports issues.  This prevents anchoring bias.
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
 `manifest.security_scan_commands` (e.g., `semgrep`, `trufflehog`,
-`gitleaks`, `bandit`).
+`gitleaks`, `bandit`).  The `PostToolUse` hook performs compensating
+reverts for any writes that bypass the pre-tool check.
 
 **Result schema**: Standard result object.  `findings` lists
 vulnerabilities.  Each finding should include severity (critical, high,
 medium, low).
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: When the objective touches authentication,
 authorization, user input handling, secrets management, cryptography, or
@@ -112,10 +120,12 @@ network communication.
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
 `manifest.benchmark_commands` (e.g., `hyperfine`, `time`, `node --prof`,
-`py-spy`).
+`py-spy`).  The `PostToolUse` hook performs compensating reverts for any
+writes that bypass the pre-tool check.
 
 **Result schema**: Standard result object.  `findings` lists performance
 concerns with complexity analysis where applicable.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: When the objective involves data processing, database
 queries, rendering, loops over collections, or any operation where
@@ -135,10 +145,13 @@ performance matters.
 
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
-`manifest.a11y_commands` (e.g., `axe`, `pa11y`, `lighthouse`).
+`manifest.a11y_commands` (e.g., `axe`, `pa11y`, `lighthouse`).  The
+`PostToolUse` hook performs compensating reverts for any writes that bypass
+the pre-tool check.
 
 **Result schema**: Standard result object.  `findings` lists accessibility
 violations with WCAG criteria references.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: When the objective involves UI, frontend components,
 HTML output, or any user-facing interface.
@@ -161,6 +174,7 @@ outside that list are blocked.  All `Bash` calls are blocked.
 
 **Result schema**: Standard result object.  `files_touched` lists the
 documentation files created or modified.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: When the objective changes public APIs, configuration
 options, CLI commands, or any user-facing behavior that should be documented.
@@ -185,5 +199,12 @@ allowed commands are determined by the project type.
 **Result schema**: Standard result object.  `findings` lists verification
 results.  `status` is `pass` only if all tests pass and the implementation
 meets the stated objective.
+See `references/result-schemas.md` for the exact field requirements validated by the SubagentStop hook.
 
 **When to invoke**: Always.  Every mission has a `verify` phase.
+
+---
+
+## Result Schema Reference
+
+See `references/result-schemas.md` for the exact JSON schemas validated by the SubagentStop hook.

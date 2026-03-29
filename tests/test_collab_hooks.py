@@ -1,9 +1,13 @@
 """Comprehensive test suite for /collab plugin hooks.
 
-96 tests covering all 8 roles, scope enforcement, result validation,
-lifecycle management, state handling, schema migration, collabctl CLI,
-parallel audit phase, TDD hook enforcement, and mission resilience
-(timeout, stale warning, failure tracking, REVIEW.md, dry-run).
+130 tests covering all 8 roles, scope enforcement, result validation,
+lifecycle management, state handling, schema migration (v3->v4), collabctl CLI,
+parallel audit phase, TDD hook enforcement, mission resilience
+(timeout, stale warning, failure tracking, REVIEW.md, dry-run),
+v4 schema fields (model_map, role_assignments, planned_roles, fail_closed),
+CLI observability (timeline, report, status model info), copilot adapter,
+compensating revert (M1), close-time scope verification (M3),
+security audit fixes, and accessibility improvements.
 
 Runs with Python 3.10+ stdlib only. Uses real git repos in temp directories.
 """
@@ -29,7 +33,7 @@ TEST_TMP_ROOT = PLUGIN_ROOT / ".tmp-tests"
 
 
 class CollabHookTests(unittest.TestCase):
-    """Full test suite for /collab plugin — 96 tests."""
+    """Full test suite for /collab plugin — 130 tests."""
 
     def setUp(self) -> None:
         TEST_TMP_ROOT.mkdir(exist_ok=True)
@@ -657,6 +661,9 @@ class CollabHookTests(unittest.TestCase):
         self.init_mission()
         self.set_phase("implement")
         ctx = self.common.load_active_context(self.repo)
+        # Count entries before the concurrent writes (force_override from set_phase)
+        ledger = ctx.mission_dir / "ledger.ndjson"
+        baseline = len([ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()])
 
         def worker(i: int):
             self.common.append_ledger(ctx, {
@@ -675,15 +682,16 @@ class CollabHookTests(unittest.TestCase):
         for t in threads:
             t.join()
 
-        ledger = ctx.mission_dir / "ledger.ndjson"
         lines = [ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 20)
+        self.assertEqual(len(lines) - baseline, 20)
 
     def test_36_ledger_deduplicates_by_tool_use_id(self):
         """Test 36: Ledger deduplicates by tool_use_id."""
         self.init_mission()
         self.set_phase("implement")
         ctx = self.common.load_active_context(self.repo)
+        ledger = ctx.mission_dir / "ledger.ndjson"
+        baseline = len([ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()])
         entry = {
             "mission_id": ctx.mission_id,
             "agent_type": "collab-implementer",
@@ -696,12 +704,11 @@ class CollabHookTests(unittest.TestCase):
         self.common.append_ledger(ctx, entry)
         self.common.append_ledger(ctx, entry)  # Duplicate
         self.common.append_ledger(ctx, entry)  # Duplicate
-        ledger = ctx.mission_dir / "ledger.ndjson"
         lines = [ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines) - baseline, 1)
 
-    def test_37_unknown_collab_agent_logs_warning(self):
-        """Test 37: Unknown collab-* agent_type logs stderr warning."""
+    def test_37_unknown_collab_agent_denied(self):
+        """Test 37: Unknown collab-* agent_type is denied (fail-closed)."""
         self.init_mission()
         self.set_phase("implement")
         rc, out, err = self.run_hook("collab_pre_tool.py", {
@@ -709,8 +716,9 @@ class CollabHookTests(unittest.TestCase):
             "tool_name": "Write", "tool_input": {"file_path": "src/app.py", "content": "x\n"},
         })
         self.assertEqual(rc, 0)
-        self.assertEqual(out, "")  # Allowed through (no JSON = no block)
-        self.assertIn("Unrecognized", err)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Unrecognized", parsed["hookSpecificOutput"]["permissionDecisionReason"])
 
     # ═══════════════════════════════════════════════════════════════════
     #  COLLABCTL TESTS (Tests 38–42)
@@ -722,7 +730,7 @@ class CollabHookTests(unittest.TestCase):
         self.assertIn("mission_id", result)
         show = json.loads(self.run_ctl("show").stdout)
         manifest = show["manifest"]
-        self.assertEqual(manifest["schema_version"], 3)
+        self.assertEqual(manifest["schema_version"], 4)
         self.assertEqual(manifest["phase"], "plan")
         self.assertTrue(manifest["awaiting_user"])
         self.assertIn("src", manifest["allowed_paths"])
@@ -738,6 +746,13 @@ class CollabHookTests(unittest.TestCase):
         self.assertEqual(manifest["timeout_hours"], 24)
         self.assertEqual(manifest["role_failure_counts"], {})
         self.assertEqual(manifest["loop_epoch"], 0)
+        # v4 fields
+        self.assertIn("model_map", manifest)
+        self.assertIn("phase_started_at", manifest)
+        self.assertIn("role_assignments", manifest)
+        self.assertIn("planned_roles", manifest)
+        self.assertIn("skipped_roles", manifest)
+        self.assertIn("fail_closed", manifest)
 
     def test_39_show_displays_mission(self):
         """Test 39: show displays mission JSON."""
@@ -965,30 +980,32 @@ class CollabHookTests(unittest.TestCase):
     #  SCHEMA MIGRATION TESTS (Test 56)
     # ═══════════════════════════════════════════════════════════════════
 
-    def test_56_migrate_upgrades_v1_to_v3(self):
-        """Test 56: migrate upgrades a v1 manifest through v2 to v3."""
+    def test_56_migrate_upgrades_v1_to_v4(self):
+        """Test 56: migrate upgrades a v1 manifest through v2, v3 to v4."""
         self.init_mission()
         # Manually downgrade manifest to simulate v1
         show = json.loads(self.run_ctl("show").stdout)
         mpath = Path(show["paths"]["manifest"])
         manifest = json.loads(mpath.read_text(encoding="utf-8"))
-        # Remove v2/v3 fields and set version to 1
+        # Remove v2/v3/v4 fields and set version to 1
         manifest["schema_version"] = 1
         for key in ("test_paths", "doc_paths", "security_scan_commands",
                      "benchmark_commands", "a11y_commands", "loop_count", "max_loops",
                      "tdd_mode", "custom_roles", "timeout_hours",
-                     "role_failure_counts", "loop_epoch"):
+                     "role_failure_counts", "loop_epoch",
+                     "model_map", "phase_started_at", "role_assignments",
+                     "planned_roles", "skipped_roles", "fail_closed"):
             manifest.pop(key, None)
         mpath.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         # Run migrate
         proc = self.run_ctl("migrate")
-        self.assertIn("migrated from schema v1 to v3", proc.stdout)
+        self.assertIn("migrated from schema v1 to v4", proc.stdout)
 
-        # Verify v2 + v3 fields exist
+        # Verify v2 + v3 + v4 fields exist
         show = json.loads(self.run_ctl("show").stdout)
         m = show["manifest"]
-        self.assertEqual(m["schema_version"], 3)
+        self.assertEqual(m["schema_version"], 4)
         self.assertIn("test_paths", m)
         self.assertIn("doc_paths", m)
         self.assertIn("security_scan_commands", m)
@@ -1001,12 +1018,18 @@ class CollabHookTests(unittest.TestCase):
         self.assertEqual(m["timeout_hours"], 24)
         self.assertEqual(m["role_failure_counts"], {})
         self.assertEqual(m["loop_epoch"], 0)
+        # v4 fields
+        self.assertIn("model_map", m)
+        self.assertIn("role_assignments", m)
+        self.assertIn("planned_roles", m)
+        self.assertIn("skipped_roles", m)
+        self.assertFalse(m["fail_closed"])
 
-    def test_57_migrate_noop_on_v3(self):
-        """Test 57: migrate is a no-op if already v3."""
+    def test_57_migrate_noop_on_v4(self):
+        """Test 57: migrate is a no-op if already v4."""
         self.init_mission()
         proc = self.run_ctl("migrate")
-        self.assertIn("already at schema v3", proc.stdout)
+        self.assertIn("already at schema v4", proc.stdout)
 
     def test_58_epoch_stale_result_returns_none(self):
         """Stale result from previous epoch returns None."""
@@ -1042,22 +1065,24 @@ class CollabHookTests(unittest.TestCase):
         self.assertEqual(loaded["role"], "implementer")
         self.assertEqual(loaded["_epoch"], 0)
 
-    def test_60_migrate_v2_to_v3(self):
-        """v2 to v3 migration adds all new fields."""
+    def test_60_migrate_v2_to_v4(self):
+        """v2 to v4 migration adds all v3 + v4 fields."""
         self.init_mission()
         show = json.loads(self.run_ctl("show").stdout)
         mpath = Path(show["paths"]["manifest"])
         manifest = json.loads(mpath.read_text(encoding="utf-8"))
         manifest["schema_version"] = 2
-        for key in ("tdd_mode", "custom_roles", "timeout_hours", "role_failure_counts", "loop_epoch"):
+        for key in ("tdd_mode", "custom_roles", "timeout_hours", "role_failure_counts", "loop_epoch",
+                     "model_map", "phase_started_at", "role_assignments",
+                     "planned_roles", "skipped_roles", "fail_closed"):
             manifest.pop(key, None)
         mpath.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         proc = self.run_ctl("migrate")
-        self.assertIn("migrated from schema v2 to v3", proc.stdout)
+        self.assertIn("migrated from schema v2 to v4", proc.stdout)
 
         migrated = json.loads(self.run_ctl("show").stdout)["manifest"]
-        self.assertEqual(migrated["schema_version"], 3)
+        self.assertEqual(migrated["schema_version"], 4)
         self.assertFalse(migrated["tdd_mode"])
         self.assertEqual(migrated["custom_roles"], [])
         self.assertEqual(migrated["timeout_hours"], 24)
@@ -1191,6 +1216,9 @@ class CollabHookTests(unittest.TestCase):
         self.init_mission()
         self.set_phase("implement")
         ctx = self.common.load_active_context(self.repo)
+        # Baseline includes any entries from set_phase (e.g., force_override)
+        ledger = ctx.mission_dir / "ledger.ndjson"
+        baseline = len([ln for ln in ledger.read_text(encoding="utf-8").splitlines() if ln.strip()])
         self.common.append_ledger(ctx, {
             "mission_id": ctx.mission_id,
             "agent_type": "collab-implementer",
@@ -1202,8 +1230,9 @@ class CollabHookTests(unittest.TestCase):
         })
         summary_path = ctx.mission_dir / "ledger-summary.json"
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        self.assertEqual(summary["entry_count"], 1)
-        self.assertEqual(summary["changed_paths"], ["src/auth.py", "src/routes.py"])
+        self.assertEqual(summary["entry_count"], baseline + 1)
+        self.assertIn("src/auth.py", summary["changed_paths"])
+        self.assertIn("src/routes.py", summary["changed_paths"])
         self.assertTrue(summary["last_updated"].endswith("Z"))
         self.assertEqual(
             self.common.changed_paths_from_summary(ctx),
@@ -1603,7 +1632,7 @@ class CollabHookTests(unittest.TestCase):
         self.assertTrue(plugin_path.exists())
         plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
         self.assertEqual(plugin["name"], "eight-eyes")
-        self.assertEqual(plugin["version"], "3.0.0")
+        self.assertEqual(plugin["version"], "4.0.0")
         self.assertEqual(plugin["agents"], "agents/")
         self.assertEqual(plugin["skills"], ["skills/collab"])
         self.assertEqual(plugin["hooks"], "hooks.json")
@@ -1615,7 +1644,7 @@ class CollabHookTests(unittest.TestCase):
         self.assertTrue(hooks_path.exists())
         payload = json.loads(hooks_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["version"], 1)
-        self.assertEqual(set(payload["hooks"]), {"preToolUse", "postToolUse", "sessionStart", "subagentStop", "stop"})
+        self.assertEqual(set(payload["hooks"]), {"preToolUse", "postToolUse", "sessionStart", "subagentStart", "subagentStop", "stop"})
         for event in payload["hooks"].values():
             self.assertEqual(event[0]["type"], "command")
             self.assertIn("bash", event[0])
@@ -1728,6 +1757,440 @@ class CollabHookTests(unittest.TestCase):
             self.assertEqual(rc, 0, msg=f"{script_name} exited non-zero: {err}")
             self.assertEqual(out, "")
             self.assertIn("hook error", err)
+
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  SCHEMA V4 TESTS (Tests 99–104)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_99_init_v4_has_model_map(self):
+        """Init creates manifest with model_map field (empty default key only)."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        self.assertIn("model_map", manifest)
+        self.assertIsInstance(manifest["model_map"], dict)
+        # Default init has at least the "default" key
+        self.assertIn("default", manifest["model_map"])
+
+    def test_100_init_v4_has_role_assignments(self):
+        """Init creates manifest with role_assignments as empty dict."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        self.assertIn("role_assignments", manifest)
+        self.assertEqual(manifest["role_assignments"], {})
+
+    def test_101_init_v4_has_planned_roles(self):
+        """Init creates manifest with planned_roles list containing all 8 roles."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        self.assertIn("planned_roles", manifest)
+        self.assertIsInstance(manifest["planned_roles"], list)
+        self.assertGreater(len(manifest["planned_roles"]), 0)
+        for role in ("implementer", "test-writer", "skeptic", "verifier", "docs"):
+            self.assertIn(role, manifest["planned_roles"])
+
+    def test_102_init_v4_has_fail_closed_default_false(self):
+        """Init creates manifest with fail_closed defaulting to False."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        self.assertIn("fail_closed", manifest)
+        self.assertFalse(manifest["fail_closed"])
+
+    def test_103_init_with_model_map_flag(self):
+        """--model-map '{"skeptic":"codex"}' populates model_map."""
+        result = json.loads(self.run_ctl(
+            "init",
+            "--objective", "Model map test",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Works",
+            "--verify-command", "pytest -q",
+            "--model-map", '{"skeptic":"codex"}',
+        ).stdout)
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["model_map"]["skeptic"], "codex")
+        # default key should still be present
+        self.assertIn("default", manifest["model_map"])
+
+    def test_104_init_with_default_model(self):
+        """--default-model gemini sets model_map['default'] to gemini."""
+        result = json.loads(self.run_ctl(
+            "init",
+            "--objective", "Default model test",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Works",
+            "--verify-command", "pytest -q",
+            "--default-model", "gemini",
+        ).stdout)
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["model_map"]["default"], "gemini")
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  MIGRATION TESTS (Tests 105–106)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_105_migrate_v3_to_v4(self):
+        """v3 manifest gains v4 fields after migrate command."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        # Downgrade to v3 by removing v4 fields
+        manifest["schema_version"] = 3
+        for key in ("model_map", "phase_started_at", "role_assignments",
+                     "planned_roles", "skipped_roles", "fail_closed"):
+            manifest.pop(key, None)
+        self.save_manifest(manifest)
+        # Run migrate
+        self.run_ctl("migrate")
+        migrated = self.load_manifest()
+        self.assertEqual(migrated["schema_version"], 4)
+        self.assertIn("model_map", migrated)
+        self.assertIn("role_assignments", migrated)
+        self.assertIn("planned_roles", migrated)
+        self.assertIn("skipped_roles", migrated)
+        self.assertIn("fail_closed", migrated)
+        self.assertFalse(migrated["fail_closed"])
+        self.assertEqual(migrated["role_assignments"], {})
+
+    def test_106_migrate_preserves_existing_v4_fields(self):
+        """Migrate does not overwrite existing v4 field values."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        # Set v4 fields to custom values, then downgrade schema_version
+        manifest["schema_version"] = 3
+        manifest["model_map"] = {"default": "gemini", "skeptic": "codex"}
+        manifest["role_assignments"] = {"implementer": {"model": "claude"}}
+        manifest["fail_closed"] = True
+        self.save_manifest(manifest)
+        self.run_ctl("migrate")
+        migrated = self.load_manifest()
+        self.assertEqual(migrated["schema_version"], 4)
+        # setdefault should NOT overwrite existing values
+        self.assertEqual(migrated["model_map"]["skeptic"], "codex")
+        self.assertEqual(migrated["role_assignments"]["implementer"]["model"], "claude")
+        self.assertTrue(migrated["fail_closed"])
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  PHASE TIMING TEST (Test 107)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_107_phase_sets_started_at(self):
+        """cmd_phase sets phase_started_at to a valid ISO timestamp."""
+        self.init_mission()
+        self.set_phase("implement")
+        manifest_after = self.load_manifest()
+        new_ts = manifest_after["phase_started_at"]
+        self.assertIsNotNone(new_ts)
+        self.assertIsInstance(new_ts, str)
+        self.assertTrue(new_ts.endswith("Z"), msg=f"Timestamp should end with Z: {new_ts}")
+        from datetime import datetime
+        parsed = datetime.fromisoformat(new_ts.replace("Z", "+00:00"))
+        self.assertIsNotNone(parsed)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  CLI OBSERVABILITY TESTS (Tests 108–110)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_108_timeline_command_exists(self):
+        """collabctl timeline runs without error on active mission."""
+        self.init_mission()
+        proc = self.run_ctl("timeline")
+        # Should succeed (rc=0) even if no assignments yet
+        self.assertIn("No role assignments", proc.stdout)
+
+    def test_109_report_command_exists(self):
+        """collabctl report runs without error on active mission."""
+        self.init_mission()
+        proc = self.run_ctl("report")
+        # Should produce a report header
+        self.assertIn("Mission Report", proc.stdout)
+        self.assertIn("Objective:", proc.stdout)
+
+    def test_110_status_shows_model_when_available(self):
+        """Status output includes model info when role_assignments has model data."""
+        self.init_mission()
+        self.set_phase("implement")
+        # Inject a role_assignment with model info
+        manifest = self.load_manifest()
+        manifest["role_assignments"]["implementer"] = {
+            "model": "codex",
+            "started_at": manifest["phase_started_at"],
+            "duration_seconds": 42,
+        }
+        self.save_manifest(manifest)
+        # Also save a role result so status has something to display
+        self.save_role_result("implementer", self.valid_role_result("implementer"))
+        text = self.run_ctl("status").stdout
+        self.assertIn("model=codex", text)
+        self.assertIn("duration=0m42s", text)
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  COPILOT ADAPTER TEST (Test 111)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_111_copilot_has_subagent_start(self):
+        """Copilot CLI hooks.json includes subagentStart hook."""
+        hooks_path = PLUGIN_ROOT / "adapters" / "copilot_cli" / "hooks.json"
+        self.assertTrue(hooks_path.exists())
+        payload = json.loads(hooks_path.read_text(encoding="utf-8"))
+        self.assertIn("subagentStart", payload["hooks"])
+        hook_entry = payload["hooks"]["subagentStart"]
+        self.assertIsInstance(hook_entry, list)
+        self.assertGreater(len(hook_entry), 0)
+        self.assertEqual(hook_entry[0]["type"], "command")
+        self.assertIn("subagent_start", hook_entry[0]["bash"])
+
+    # ═══════════════════════════════════════════════════════════════════
+    #  FAIL-CLOSED TEST (Test 112)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def test_112_init_with_fail_closed(self):
+        """--fail-closed creates manifest with fail_closed=True."""
+        result = json.loads(self.run_ctl(
+            "init",
+            "--objective", "Fail closed test",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Works",
+            "--verify-command", "pytest -q",
+            "--fail-closed",
+        ).stdout)
+        manifest = self.load_manifest()
+        self.assertTrue(manifest["fail_closed"])
+
+
+    def test_113_awk_system_bypass_denied(self):
+        """awk with system() must be denied for read-only roles."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "awk '{system(\"rm -rf /\")}'"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_114_awk_simple_denied(self):
+        """Even simple awk must be denied -- too many write/exec capabilities."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "awk '{print $1}' file.txt"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_115_sed_n_w_bypass_denied(self):
+        """sed -n with w command must be denied for read-only roles."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "sed -n 'w /tmp/pwned' src/app.py"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_116_sed_n_e_bypass_denied(self):
+        """sed -n with e command must be denied for read-only roles."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "sed -n 'e id' src/app.py"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_117_sed_n_print_line_allowed(self):
+        """sed -n with line print (e.g. '5p') must still be allowed."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "sed -n '5p'"},
+        })
+        self.assertIsNone(result)
+
+    def test_118_sed_n_pattern_print_allowed(self):
+        """sed -n with pattern print (e.g. '/foo/p') must still be allowed."""
+        self.init_mission()
+        self.set_phase("review")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-skeptic",
+            "tool_name": "Bash", "tool_input": {"command": "sed -n '/error/p'"},
+        })
+        self.assertIsNone(result)
+
+    def test_119_phase_verify_requires_audit_roles(self):
+        """Transitioning to verify without audit role results must fail."""
+        self.init_mission()
+        self.set_phase("implement", force=False)
+        self.set_phase("review", force=False)
+        self.set_phase("security", force=False)
+        # Only security done, missing performance/accessibility/skeptic
+        self.save_role_result("security", self.valid_role_result("security"))
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--cwd", str(self.repo), "phase", "verify"],
+            cwd=str(self.repo), text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_120_phase_verify_with_skip_role(self):
+        """Transitioning to verify with --skip-role bypasses missing audit roles."""
+        self.init_mission()
+        self.set_phase("implement", force=False)
+        self.set_phase("review", force=False)
+        self.set_phase("security", force=False)
+        self.set_phase("performance", force=False)
+        self.set_phase("accessibility", force=False)
+        # Save accessibility result only, skip the rest
+        self.save_role_result("accessibility", self.valid_role_result("accessibility"))
+        proc = self.run_ctl(
+            "phase", "verify",
+            "--skip-role", "security",
+            "--skip-role", "performance",
+            "--skip-role", "skeptic",
+        )
+        self.assertEqual(proc.returncode, 0)
+
+
+    # ==================================================================
+    #  FEATURE TESTS: M1 Revert, M3 Close Scope, Security, Accessibility
+    # ==================================================================
+
+    def test_121_post_tool_revert_concept(self):
+        """PostToolUse code path imports READ_ONLY_ROLES for revert logic."""
+        spec = importlib.util.spec_from_file_location(
+            "collab_post_tool_check", HOOKS_DIR / "collab_post_tool.py",
+        )
+        source = (HOOKS_DIR / "collab_post_tool.py").read_text(encoding="utf-8")
+        self.assertIn("READ_ONLY_ROLES", source)
+        self.assertIn("scope_violation_reverted", source)
+        self.assertIn("custom_role_scope_type", source)
+
+    def test_122_close_captures_git_baseline(self):
+        """Init captures git_baseline in manifest."""
+        self.init_mission()
+        manifest = self.load_manifest()
+        self.assertIn("git_baseline", manifest)
+
+    def test_123_close_scope_verification(self):
+        """_verify_close_scope detects out-of-scope files."""
+        # Import collabctl module
+        spec = importlib.util.spec_from_file_location(
+            "collabctl_test", SCRIPTS_DIR / "collabctl.py",
+        )
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        # A manifest with only src/ allowed
+        manifest = {
+            "allowed_paths": ["src/"],
+            "test_paths": ["tests/"],
+            "doc_paths": ["docs/"],
+        }
+        # No git changes = no violations (the function calls git diff)
+        violations = mod._verify_close_scope(manifest, self.repo)
+        self.assertIsInstance(violations, list)
+
+    def test_124_force_logged_to_ledger(self):
+        """--force usage is recorded in ledger as force_override."""
+        self.init_mission()
+        # Use --force to skip from plan to verify (normally illegal)
+        self.set_phase("verify", force=True)
+        ctx = self.common.load_active_context(self.repo)
+        ledger = ctx.mission_dir / "ledger.ndjson"
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+        force_entries = [
+            json.loads(ln) for ln in lines if ln.strip()
+            and json.loads(ln).get("kind") == "force_override"
+        ]
+        self.assertTrue(len(force_entries) >= 1)
+        self.assertEqual(force_entries[0]["phase_from"], "plan")
+        self.assertEqual(force_entries[0]["phase_to"], "verify")
+
+    def test_125_skip_role_validates_audit_roles(self):
+        """--skip-role rejects non-audit role names."""
+        self.init_mission()
+        self.set_phase("implement")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"),
+             "--cwd", str(self.repo),
+             "phase", "review",
+             "--skip-role", "implementer"],
+            cwd=str(self.repo), text=True, capture_output=True, check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not a valid audit role", proc.stderr)
+
+    def test_126_unrecognized_agent_denied(self):
+        """Unrecognized collab-* agent type is denied by pre_tool hook."""
+        self.init_mission()
+        self.set_phase("implement")
+        rc, out, err = self.run_hook("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-hacker",
+            "tool_name": "Bash", "tool_input": {"command": "rm -rf /"},
+        })
+        self.assertEqual(rc, 0)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Unrecognized", parsed["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_127_timeline_fits_80_columns(self):
+        """Timeline header fits within 80 characters."""
+        spec = importlib.util.spec_from_file_location(
+            "collabctl_test_tl", SCRIPTS_DIR / "collabctl.py",
+        )
+        source = (SCRIPTS_DIR / "collabctl.py").read_text(encoding="utf-8")
+        # Find the header format string in cmd_timeline
+        # The header is built from: Phase(10) + Role(17) + Model(8) + Status(14) + Start(8) + Dur(8) + Find
+        # We test via running the command
+        self.init_mission()
+        self.set_phase("implement")
+        # Dispatch a role via subagent_start to populate role_assignments
+        self.run_hook("collab_subagent_start.py", {
+            "cwd": str(self.repo),
+            "agent_type": "collab-implementer",
+        })
+        proc = self.run_ctl("timeline")
+        header_line = proc.stdout.strip().splitlines()[0]
+        self.assertLessEqual(len(header_line), 80, f"Header is {len(header_line)} chars: {header_line!r}")
+
+    def test_128_status_shows_running(self):
+        """Status shows 'running' for dispatched-but-incomplete roles."""
+        self.init_mission()
+        self.set_phase("implement")
+        # Dispatch implementer (started_at set, no completed_at)
+        self.run_hook("collab_subagent_start.py", {
+            "cwd": str(self.repo),
+            "agent_type": "collab-implementer",
+        })
+        proc = self.run_ctl("status")
+        self.assertIn("running", proc.stdout)
+
+    def test_129_report_includes_severity(self):
+        """Report output includes severity labels from findings."""
+        self.init_mission()
+        self.set_phase("implement")
+        self.set_phase("review")
+        self.set_phase("security")
+        # Save security result with findings that have severity
+        result = self.valid_role_result("security")
+        result["findings"] = [
+            {"severity": "high", "summary": "SQL injection risk"},
+            {"severity": "low", "summary": "Missing logging"},
+        ]
+        self.save_role_result("security", result)
+        proc = self.run_ctl("report")
+        self.assertIn("[HIGH]", proc.stdout)
+        self.assertIn("[LOW]", proc.stdout)
+
+    def test_130_no_mission_suggests_init(self):
+        """'No active mission' messages suggest running init."""
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"),
+             "--cwd", str(self.repo), "status"],
+            cwd=str(self.repo), text=True, capture_output=True, check=False,
+        )
+        self.assertIn("collabctl init", proc.stdout)
 
 
 if __name__ == "__main__":

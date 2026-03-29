@@ -9,17 +9,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-def _fail_open(exc: BaseException) -> int:
+def _fail_open(exc: Exception) -> int:
     """Log hook failures and always allow the tool call to proceed."""
     print(f"[collab] collab_post_tool hook error: {exc}", file=sys.stderr)
     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+    try:
+        from collab_common import load_active_context, append_ledger
+        ctx = load_active_context(Path(".").resolve())
+        if ctx:
+            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+    except Exception:
+        pass  # Double-defense: if ledger write fails, still fail-open
     return 0
 
 
 def _main() -> int:
     from collab_common import (
         ALL_COLLAB_ROLES,
+        READ_ONLY_ROLES,
         append_ledger,
+        custom_role_config,
+        custom_role_scope_type,
         hook_context,
         is_active_manifest,
         load_active_context,
@@ -81,6 +91,39 @@ def _main() -> int:
         return 0
 
     append_ledger(ctx, entry)
+
+    # Compensating revert for read-only roles
+    if entry.get("kind") == "file_mutation":
+        is_read_only = role in READ_ONLY_ROLES
+        if not is_read_only:
+            cr = custom_role_config(ctx.manifest, role)
+            if cr and custom_role_scope_type(cr) == "read_only":
+                is_read_only = True
+        if is_read_only:
+            import subprocess
+            for rel_path in entry.get("paths", []):
+                abs_path = (ctx.project_root / rel_path).resolve()
+                try:
+                    check = subprocess.run(
+                        ["git", "ls-files", "--error-unmatch", str(rel_path)],
+                        cwd=str(ctx.project_root), capture_output=True, text=True, check=False,
+                    )
+                    if check.returncode == 0:
+                        subprocess.run(
+                            ["git", "checkout", "--", str(rel_path)],
+                            cwd=str(ctx.project_root), capture_output=True, check=False,
+                        )
+                    else:
+                        abs_path.unlink(missing_ok=True)
+                except Exception:
+                    pass  # Best-effort revert
+            append_ledger(ctx, {
+                "kind": "scope_violation_reverted",
+                "role": role,
+                "paths": entry.get("paths", []),
+                "tool_use_id": f"revert:{entry.get('tool_use_id', 'unknown')}",
+            })
+
     print_json(hook_context(
         "PostToolUse",
         f"[COLLAB] Recorded {tool} evidence for {payload.get('agent_type')}.",
@@ -91,13 +134,13 @@ def _main() -> int:
 def main() -> int:
     try:
         return _main()
-    except BaseException as exc:
+    except Exception as exc:
         return _fail_open(exc)
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BaseException as exc:
+    except Exception as exc:
         _fail_open(exc)
         raise SystemExit(0)

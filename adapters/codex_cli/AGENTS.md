@@ -1,5 +1,11 @@
 # Eight-Eyes Multi-Agent Code Review
 
+## Codex CLI Limitations (Experimental)
+- PreToolUse only intercepts Bash commands (Write/Edit enforcement is prompt-level only)
+- No SubagentStart or SubagentStop hooks (context injection and result validation rely on prompts)
+- Scope drift is possible -- inspect the ledger and verifier output to confirm
+- For full hook-enforced boundaries, use Claude Code or Copilot CLI
+
 When the user invokes `/8eyes` or requests multi-agent review:
 
 1. Run: `python3 scripts/collabctl.py init --objective "<objective>" --allowed-path src --criterion "<criteria>"`

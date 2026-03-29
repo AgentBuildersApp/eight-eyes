@@ -2,13 +2,15 @@
 
 ![eight-eyes](docs/images/header.png)
 
-> Multi-agent code review for Claude Code, Copilot CLI, and Codex CLI.
+> Eight constrained reviewers. Each scoped to a different failure surface. Hook-enforced walls, not just prompts.
 
 You ask an agent to review its own work. It says "looks good." You ask a second agent. It also says "looks good" -- because it read the first agent's summary and anchored on the same framing. Meanwhile an auth bypass sits in plain sight because nobody looked at the code like an attacker would.
 
 `eight-eyes` splits a code change into eight constrained roles -- implementer, test writer, skeptic, security auditor, performance profiler, accessibility checker, docs writer, and verifier -- each aimed at a different failure surface. The skeptic never sees the implementer's narrative. The implementer cannot run Bash. The security auditor cannot edit files. These are not suggestions in a system prompt. They are hook-enforced walls: the `PreToolUse` hook intercepts tool calls before execution and blocks anything outside the role's scope.
 
 Prompts define how a model should behave. Hooks decide what it is allowed to do. That distinction is why this works.
+
+A mission is a scoped unit of work: an objective, allowed file paths, acceptance criteria, and approved commands. `/8eyes` initializes a mission and drives the eight roles through it.
 
 ## What It Catches
 
@@ -54,18 +56,6 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 
 ---
 
-### Teams
-
-- Your team's code reviews are mostly "LGTM." The skeptic reviews blind — no author narrative, no ability to edit files, only to find problems.
-
-- A new developer is merging their first PR. `eight-eyes` produces structured findings with file paths and evidence in minutes instead of waiting days for a senior to find time.
-
-- Your style guide lives in a wiki nobody reads during review. Put it in `REVIEW.md` — the skeptic, security, and verifier check against it every time.
-
-- Six PRs are waiting for review on Friday afternoon. `/8eyes` gives each one the same structured eight-role review regardless of how tired the team is.
-
----
-
 ### Security-Critical Work
 
 - You're building auth or payment flows where a missed edge case has real consequences. The security role reviews like an external auditor — read-only, approved scan commands only, cannot "fix" things.
@@ -94,65 +84,7 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 
 - One AI writes code and another reviews it, but they keep agreeing. `eight-eyes` breaks this because the skeptic literally cannot see the author's narrative. Agreement requires independent evidence.
 
----
-
-### Legacy & Migration
-
-- You inherited a codebase with no tests and a framework two versions behind. Run `/8eyes` with `--tdd` — the test writer creates tests for current behavior before you touch it, then the verifier confirms they still pass after.
-
-- You're changing your database schema. The verifier runs migration scripts with approved commands, the security role checks for data exposure through new API fields, the skeptic asks whether rollback is possible.
-
-- You're replacing an internal API with a third-party service. The performance role benchmarks against the old implementation, the test writer covers the contract boundary, the verifier confirms the switchover end to end.
-
----
-
-### Open Source
-
-- You receive a PR from a contributor you've never worked with and don't have time to trace every code path. Eight roles split the review surface so security, performance, correctness, and accessibility are each examined independently.
-
-- You're cutting a release that other projects depend on. The docs role checks that API docs match actual exports, the verifier runs your compatibility suite, the skeptic looks for breaking changes the tests don't cover.
-
----
-
-### Compliance & Audit
-
-- You need to show an auditor that code changes go through documented review. `eight-eyes` produces timestamped, structured evidence per role — append-only ledger, every tool action recorded. This is a machine-readable audit trail, not a checkbox.
-
-- You keep shipping accessibility regressions. The accessibility role runs your approved tools — semantic HTML, keyboard nav, contrast — every time, not just when someone remembers.
-
-- Security-sensitive changes need a second set of eyes. The security role's structured findings with severity ratings and CVE references give the compliance team what they need without scheduling a meeting.
-
----
-
-### Education
-
-- You wrote your first feature in a new framework and want real feedback, not a tutorial. Eight roles review your code the way experienced practitioners would — findings link to specific lines, not generic advice.
-
-- You're mentoring a junior developer. Run `/8eyes` on their project — the structured findings become a teaching syllabus across eight perspectives, not just yours.
-
----
-
-### Custom Roles
-
-- Your project needs i18n verification. Define `--custom-role "name=i18n-checker,scope=read_only,commands=grep -r 'hardcoded string' src/"` — it runs alongside the other roles with the same enforcement.
-
-- You have license compliance requirements. A custom role runs your license checker, can't edit files, and reports in the same schema. The verifier confirms findings are addressed before close.
-
-- You need every API endpoint to match the OpenAPI spec. A custom verifier runs your contract tests, the skeptic reviews the spec for ambiguity, the docs role updates it if the implementation diverged.
-
----
-
-### High-Stakes Environments
-
-- You're refactoring a payment processor. The implementer is scoped to `src/payments/` — `src/fraud/` is a denied path. The security auditor runs `snyk test` before close. The blind skeptic verifies fraud logic is unchanged.
-
-- You're updating a patient portal UI. The implementer can reach `frontend/` but not `backend/`, `db/`, or `config/secrets`. The security auditor scans for PHI patterns. The verifier runs a regex sweep for SSN and DOB in test fixtures.
-
-- A junior dev and an AI are adding OAuth2 login. The implementer can write to `src/auth/oauth/` but `src/middleware/` is denied — nobody can modify authentication middleware. The security auditor runs `semgrep --config=auth` and must find zero issues.
-
-- Your nightly CI job updates dependencies. The verifier must pass unit, integration, and e2e suites — not just unit tests. The security auditor blocks on moderate-or-higher vulnerabilities.
-
-- Two developers run AI agents simultaneously on different tasks. Each mission scopes its implementer to different paths. Shared critical files are denied to both — no merge conflicts in files that matter.
+`eight-eyes` also applies to team reviews, legacy migration, open source maintainership, compliance-driven workflows, educational settings, and high-stakes environments like payment and healthcare systems. See `docs/USE_CASES.md` for detailed scenarios.
 
 ## Quick Start
 
@@ -185,6 +117,12 @@ git clone https://github.com/AgentBuildersApp/eight-eyes.git
 cd eight-eyes
 python3 install.py          # auto-detects installed platforms
 ```
+
+The installer copies hook scripts, agent prompts, and the `/8eyes` command into your project. Run `python3 scripts/collabctl.py --cwd . verify` to confirm everything is in place.
+
+### Uninstall
+
+To remove eight-eyes from your project, delete the plugin directory and remove the hook entries from your platform's settings file. The installer does not modify source code or Git history.
 
 ---
 
@@ -251,10 +189,10 @@ The hook layer intercepts at four points:
 
 | Hook | What it enforces |
 |------|-----------------|
-| `SubagentStart` | Injects role context, blind-review barriers, REVIEW.md criteria |
-| `PreToolUse` | Blocks out-of-scope writes, unapproved Bash, path violations |
-| `PostToolUse` | Records every tool action to the evidence ledger |
-| `SubagentStop` | Requires structured result block before the role can finish |
+| `SubagentStart` | Injects role context, blind-review barriers, REVIEW.md criteria; records role dispatch timing and model identity |
+| `PreToolUse` | Blocks out-of-scope writes, unapproved Bash, path violations; double-defense `_fail_open` with optional fail-closed mode |
+| `PostToolUse` | Records every tool action to the evidence ledger; reverts unauthorized writes for read-only roles via `git checkout` or `unlink` |
+| `SubagentStop` | Requires structured result block before the role can finish; records role completion timing (duration, finding count) |
 
 An additional `Stop` hook prevents the session from ending while required audit results are still missing.
 
@@ -274,14 +212,26 @@ Each role is modeled on how experienced practitioners narrow their failure surfa
 
 | Command | What it does |
 |---------|---------------|
-| `init` | Creates a mission manifest. Accepts `--objective`, `--allowed-path`, `--denied-path`, `--test-path`, `--doc-path`, `--criterion`, `--verify-command`, `--security-command`, `--benchmark-command`, `--a11y-command`, `--tdd`, `--timeout-hours`, `--max-loops`, `--dry-run`, and `--custom-role`. |
+| `init` | Creates a mission manifest. Accepts `--objective`, `--allowed-path`, `--denied-path`, `--test-path`, `--doc-path`, `--criterion`, `--verify-command`, `--security-command`, `--benchmark-command`, `--a11y-command`, `--tdd`, `--timeout-hours`, `--max-loops`, `--dry-run`, `--custom-role`, `--model-map`, `--default-model`, `--fail-closed`, and `--skip-role`. |
 | `show` | Prints the active manifest and file locations as JSON. |
-| `phase <name>` | Advances the mission with transition validation. Use `--force` to bypass phase rules. |
+| `phase <name>` | Advances the mission with transition validation. Use `--force` to bypass phase rules (logged to ledger and `progress.md`). |
 | `progress` | Appends a progress note to the mission log. |
-| `close pass\|abort` | Closes the active mission and clears the active pointer. |
+| `timeline` | Prints role dispatch and completion timing, duration, model, and finding count per role. |
+| `report` | Produces a consolidated findings report across all completed roles. |
+| `close pass\|abort` | Closes the active mission and clears the active pointer. Runs close-time scope verification. Use `--force-close` with a reason to override scope violations. |
 | `ledger-trim` | Archives older ledger entries, keeps the most recent N. |
 | `migrate` | Migrates the active mission to the latest schema version. |
 | `verify` | Verifies repo layout, hooks, commands, adapters, and installer. |
+
+### Model Routing
+
+Route specific roles to different model backends with `--model-map`:
+
+```bash
+/8eyes:collab Refactor auth to use JWT --model-map '{"skeptic":"claude-opus-4-20250514","security":"claude-opus-4-20250514"}'
+```
+
+Set a default model for all roles with `--default-model`, then override individual roles with `--model-map`.
 
 ### Custom Roles
 
@@ -306,13 +256,22 @@ Custom roles participate in wildcard `collab-*` handling, inherit mission contex
 
 If a project root contains `REVIEW.md`, the first 2000 characters are injected into skeptic, security, and verifier context at subagent start. Use it for project-specific review criteria, operational constraints, or release gates.
 
+```markdown
+<!-- REVIEW.md -->
+## Review Criteria
+- All API endpoints must validate input before processing
+- No credentials in logs, error messages, or API responses
+- Database queries must use parameterized statements
+- Frontend changes must pass axe-core accessibility audit
+```
+
 ## Architecture
 
 ![Architecture](docs/images/architecture.png)
 
 Mission state lives under the Git common directory, not the working tree. That keeps the coordinator, the root checkout, and any isolated worktrees pointed at the same manifest, ledger, snapshots, and per-role result files.
 
-Prompts and hooks play different roles. Prompts tell a model how to behave. Hooks decide what it is allowed to do. The prompt can ask the skeptic to stay read-only; the hook can prevent writes even if the prompt is ignored.
+Prompts and hooks play different roles. Prompts tell a model how to behave. Hooks decide what it is allowed to do. The prompt can ask the skeptic to stay read-only; the hook can prevent writes even if the prompt is ignored. Model routing (`model_map`) lets you assign different model backends to different roles -- a faster model for implementation, a stronger model for security review -- while the observability layer (`role_assignments`, `timeline`, `report`) tracks dispatch timing, completion duration, and finding counts per role.
 
 Worktree isolation is used where incidental writes or tool artifacts would otherwise leak across roles.
 
@@ -322,11 +281,11 @@ Worktree isolation is used where incidental writes or tool artifacts would other
 |----------|--------|-------------------|
 | Claude Code | Full (GA) | Hook-level (all tools) |
 | Copilot CLI | Full (GA) | Hook-level (all tools) |
-| Codex CLI | Experimental | Hook-level (Bash only), prompt-level (Write/Edit) |
+| Codex CLI | Experimental | Hook-level (Bash only), prompt-level (Write/Edit). Codex does not support SubagentStart/Stop hooks, so role timing and model tracking are unavailable. Inspect ledger and verifier output for scope compliance. |
 
 ## Testing
 
-96 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, the collabctl CLI, parallel audit phase, TDD hook enforcement, and mission resilience (timeout, stale warning, failure tracking, REVIEW.md, dry-run). Stdlib only, no external dependencies.
+130 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, the collabctl CLI, parallel audit phase, TDD hook enforcement, and mission resilience (timeout, stale warning, failure tracking, REVIEW.md, dry-run). Stdlib only, no external dependencies.
 
 ```bash
 python3 -m pytest tests/ -q
@@ -347,6 +306,8 @@ python3 -m pytest tests/ -q
 | Stop hook blocks session exit during audit | Missing audit results | Wait for all four roles or set `awaiting_user=true` |
 | Stale mission warning | Mission older than 12 hours | Run `collabctl show`, then continue, close, or reinitialize |
 | Codex CLI does not block write/edit scope drift | Current Codex hooks enforce Bash only | Treat Codex as experimental; inspect ledger and verifier output |
+| `collabctl close` blocked by scope violation | Files outside `allowed_paths` were modified during the mission | Remove the out-of-scope changes, or use `--force-close "reason"` to override (logged to ledger) |
+| Phase transition to `verify` blocked | Audit roles not yet complete | Complete all audit roles (skeptic, security, performance, accessibility) or use `--skip-role <name>` to explicitly skip |
 
 ## Requirements
 
