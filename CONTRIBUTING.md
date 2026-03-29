@@ -80,3 +80,4 @@ When contributing a new hook or modifying an existing one, wrap the enforcement 
 - Tests come before advancement. If a phase cannot be verified, it does not pass.
 - Python stays 100% stdlib. Do not add pip dependencies.
 - Docs and metadata must describe the behavior that ships, not the behavior a future wave might add.
+
