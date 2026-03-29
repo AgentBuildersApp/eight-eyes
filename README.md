@@ -40,97 +40,119 @@ Each finding includes file paths, line numbers, and concrete evidence. The verif
 
 ## When This Matters
 
-### Solo developer workflows
+---
 
-You are the only developer on the project. You wrote the code, you wrote the tests, you reviewed the diff. Everything looks correct because you are the same person who made every assumption baked into it. `eight-eyes` gives you eight reviewers who did not write the code and cannot see each other's notes.
+### Solo Developer
 
-You are refactoring a module that the rest of your app depends on. You are confident the behavior is preserved, but confidence is not proof. The verifier role runs your acceptance criteria against the actual code and reports what passes and what does not -- with curl output, test results, or whatever commands you approved at init time.
+- You wrote the code and reviewed it yourself. `eight-eyes` gives you eight reviewers who didn't write it and can't see each other's notes.
 
-You are upgrading a major dependency -- React 18 to 19, Django 4 to 5, a new ORM version. The change touches dozens of files and the migration guide says "most apps won't need changes." The skeptic reviews blind, without your optimism. The performance role benchmarks before and after. The test writer checks whether your existing tests actually cover the changed APIs.
+- You're refactoring a module the rest of your app depends on. The verifier runs your acceptance criteria against the actual code — confidence is not proof.
 
-You have accumulated a backlog of TODO comments and suppressed linter warnings. You want to burn through the tech debt in a focused session but you do not trust yourself to avoid introducing regressions while fixing old ones. `eight-eyes` scopes the implementer to the paths you choose, and the skeptic and verifier independently confirm that each fix did not break something adjacent.
+- You're upgrading a major dependency and the migration guide says "most apps won't need changes." The skeptic reviews blind without your optimism, the performance role benchmarks before and after, and the test writer checks whether your tests actually cover the changed APIs.
 
-### Team workflows
+- You're burning through tech debt and don't trust yourself to avoid regressions. `eight-eyes` scopes the implementer to the paths you choose while the skeptic and verifier independently confirm nothing adjacent broke.
 
-Your team does code review, but the reviews are mostly "LGTM" with a rubber-stamp approval. The skeptic role exists specifically for this: it reviews the change blind, without the author's narrative, and has no ability to edit files -- only to find problems.
+---
 
-A new developer joined the team last week and is about to merge their first real PR. You want to give thorough feedback without spending two hours on it yourself. `eight-eyes` runs the full eight-role review and produces structured findings with file paths and evidence. You read the summary, add your own context, and the new developer gets a detailed review in minutes instead of days.
+### Teams
 
-Your team has a style guide and architectural conventions, but they live in a wiki that nobody reads during code review. You put the rules in `REVIEW.md` at the project root. The skeptic, security, and verifier roles receive those rules as part of their context and check the change against them every time -- not just when someone remembers.
+- Your team's code reviews are mostly "LGTM." The skeptic reviews blind — no author narrative, no ability to edit files, only to find problems.
 
-It is the end of the sprint and there are six PRs waiting for review. Nobody wants to be the bottleneck. You run `/8eyes` across the batch. Each PR gets the same structured multi-role review regardless of how tired the team is on Friday afternoon.
+- A new developer is merging their first PR. `eight-eyes` produces structured findings with file paths and evidence in minutes instead of waiting days for a senior to find time.
 
-### Security-critical work
+- Your style guide lives in a wiki nobody reads during review. Put it in `REVIEW.md` — the skeptic, security, and verifier check against it every time.
 
-You are building authentication, payment flows, or anything where a missed edge case has real consequences. The security role is constrained to read-only tools plus approved scan commands -- it reviews like an external auditor, not a collaborator who might "fix" things and introduce new issues.
+- Six PRs are waiting for review on Friday afternoon. `/8eyes` gives each one the same structured eight-role review regardless of how tired the team is.
 
-You are implementing a secrets management integration and you need to verify that no credentials leak into logs, error messages, or API responses. The security role scans for exactly this. It cannot edit code, so it cannot accidentally "fix" a leak by deleting the log line and hiding the problem.
+---
 
-You store API keys, tokens, or PII and you are about to change how they are accessed. The security role checks for exposure in the diff -- hardcoded values, keys in query strings, tokens in error responses. The verifier confirms that the access pattern works as intended. Neither role sees the other's findings until adjudication, so they cannot anchor on each other's framing.
+### Security-Critical Work
 
-### Quality gates
+- You're building auth or payment flows where a missed edge case has real consequences. The security role reviews like an external auditor — read-only, approved scan commands only, cannot "fix" things.
 
-You are shipping code to a client and need to show that a security review, accessibility check, and test coverage pass actually happened. Every role writes a structured result with evidence, file paths, and a recommendation. The mission ledger is an auditable record of what was checked and what was found.
+- You need to verify no credentials leak into logs, error messages, or API responses. The security role scans for exactly this and cannot accidentally hide the problem by editing the code.
 
-You want to add a review gate to your CI pipeline that goes beyond linting and test passes. `eight-eyes` missions produce machine-readable JSON results. The `collabctl show` output gives you a per-role pass/needs_changes/abort status that a CI step can check. If any role flags the change, the pipeline fails with specific findings, not a generic "review required" label.
+- You're changing how API keys or PII are accessed. The security role checks for exposure in the diff while the verifier confirms the new access pattern works — neither sees the other's findings.
 
-You are preparing a release candidate and you want a final sweep before tagging. Run `/8eyes` with the release objectives as acceptance criteria. The verifier checks each criterion with the commands you approve. The skeptic looks for things that will break in production but pass in dev. The docs role confirms that CHANGELOG, README, and API docs reflect the actual state of the release.
+---
 
-### AI-assisted development
+### Quality Gates
 
-Your team adopted an AI coding agent and the code it produces is technically correct but nobody is reviewing it with adversarial intent. `eight-eyes` runs the same kind of structured review on AI-generated code that you would run on a junior developer's first PR -- except it cannot be talked out of its concerns.
+- You're shipping to a client and need evidence that security, accessibility, and testing actually happened. Every role writes structured results with evidence. The mission ledger is an auditable record.
 
-You used Copilot or Cursor to generate a module and it looks reasonable, but you have a nagging feeling that the generated code is subtly wrong in ways you cannot articulate. The skeptic reviews the change blind -- no knowledge of what the AI was asked to do, just the code on disk and the acceptance criteria. The security role checks for patterns that AI code generators frequently get wrong: overly permissive defaults, missing input validation, hardcoded fallbacks.
+- You want a review gate in CI beyond linting. `eight-eyes` produces machine-readable JSON — a CI step can check per-role pass/fail status and block on specific findings.
 
-You are building an agentic workflow where one AI writes code and another is supposed to review it, but the reviewer keeps agreeing with the author. `eight-eyes` breaks this dynamic because the skeptic literally cannot see the author's narrative. Hook enforcement means agreement requires independent evidence, not social compliance.
+- You're preparing a release candidate. The verifier checks each criterion, the skeptic looks for things that break in production but pass in dev, the docs role confirms your changelog is current.
 
-### Legacy and migration
+---
 
-You inherited a codebase with no tests, unclear boundaries, and a framework two major versions behind. You need to modernize incrementally without a rewrite. Run `/8eyes` with `--tdd` on each migration step. The test writer creates tests for the current behavior before you touch it. The implementer makes the change. The verifier confirms the tests still pass. The skeptic checks whether the migration introduced hidden coupling.
+### AI-Assisted Development
 
-You are changing your database schema -- adding columns, renaming fields, migrating data. The verifier runs your migration scripts against a test database using the commands you approved. The security role checks that the migration does not expose data through new API fields. The skeptic asks whether rollback is possible and what happens to in-flight requests during the migration.
+- Your team uses AI coding agents but nobody reviews the output with adversarial intent. `eight-eyes` reviews AI-generated code like a junior developer's first PR — except it can't be talked out of its concerns.
 
-You are replacing an internal API with a third-party service. The old code is well-understood. The new integration is not. The performance role benchmarks latency and throughput against the old implementation. The test writer covers the contract boundary. The verifier confirms the switchover works end to end.
+- You used Copilot to generate a module and something feels off. The skeptic reviews blind — no knowledge of what the AI was asked to do. The security role checks for patterns AI generators frequently get wrong: permissive defaults, missing validation, hardcoded fallbacks.
 
-### Open source
+- One AI writes code and another reviews it, but they keep agreeing. `eight-eyes` breaks this because the skeptic literally cannot see the author's narrative. Agreement requires independent evidence.
 
-You maintain an open source project and receive a pull request from a contributor you have never worked with. You need to check it thoroughly but do not have time to trace every code path. The eight roles split the review surface so that security, performance, correctness, and accessibility are each examined by a reviewer that cannot be distracted by the others.
+---
 
-You are cutting a release of a library that other projects depend on. The diff is large and touches public API surface. The docs role checks whether the API documentation matches the actual exports. The verifier runs your compatibility test suite. The skeptic looks for breaking changes that the test suite does not cover. The structured results give you a release-readiness report, not just a gut feeling.
+### Legacy & Migration
 
-### Compliance and audit
+- You inherited a codebase with no tests and a framework two versions behind. Run `/8eyes` with `--tdd` — the test writer creates tests for current behavior before you touch it, then the verifier confirms they still pass after.
 
-You need to demonstrate to an auditor that code changes go through a documented review process. `eight-eyes` produces timestamped, structured evidence per role -- what was reviewed, what was found, what passed, what was flagged. The mission ledger is append-only. Every tool action is recorded by the PostToolUse hook. This is not a checkbox. It is a machine-readable audit trail.
+- You're changing your database schema. The verifier runs migration scripts with approved commands, the security role checks for data exposure through new API fields, the skeptic asks whether rollback is possible.
 
-You keep shipping accessibility regressions because nobody catches them until a user reports them. The accessibility role runs axe-core or whatever tools you approve, checks semantic HTML, keyboard navigation, and contrast -- every time, not just when someone remembers to.
+- You're replacing an internal API with a third-party service. The performance role benchmarks against the old implementation, the test writer covers the contract boundary, the verifier confirms the switchover end to end.
 
-You have a compliance requirement that security-sensitive changes get a second set of eyes. You run the same `/8eyes` mission you would run for any change, but the security role's structured findings with severity ratings and CVE references give the compliance team exactly what they need -- without scheduling a meeting or writing a separate report.
+---
 
-### Education and learning
+### Open Source
 
-You are learning a new framework and you wrote your first real feature in it. You want feedback, but not from a tutorial. The eight roles review your code the way experienced practitioners would. The security role flags patterns that look fine in a tutorial but break in production. The performance role finds the N+1 query you did not know you wrote. The findings link to specific lines, not generic advice.
+- You receive a PR from a contributor you've never worked with and don't have time to trace every code path. Eight roles split the review surface so security, performance, correctness, and accessibility are each examined independently.
 
-You are mentoring a junior developer and you want them to experience what a thorough review feels like before they join a team with real stakes. Run `/8eyes` on their project. The structured findings become a teaching syllabus: here is what the security role found, here is why, here is how to fix it. The junior developer learns from eight perspectives, not just yours.
+- You're cutting a release that other projects depend on. The docs role checks that API docs match actual exports, the verifier runs your compatibility suite, the skeptic looks for breaking changes the tests don't cover.
 
-### Custom role scenarios
+---
 
-Your project has i18n requirements and you need to verify that every user-facing string goes through the translation layer. You define a custom role: `--custom-role "name=i18n-checker,scope=read_only,commands=grep -r 'hardcoded string' src/"`. It participates in the audit phase alongside the other roles, with the same structured result format and the same scope enforcement.
+### Compliance & Audit
 
-You have license compliance requirements -- every dependency must be Apache-2.0, MIT, or BSD. You define a custom role that runs your license checker. It cannot edit files. It reports findings in the same schema as every other role. The verifier confirms the findings are addressed before the mission can close.
+- You need to show an auditor that code changes go through documented review. `eight-eyes` produces timestamped, structured evidence per role — append-only ledger, every tool action recorded. This is a machine-readable audit trail, not a checkbox.
 
-You maintain an API and you need to verify that every endpoint matches the OpenAPI spec. A custom verifier role runs your contract testing tool. The skeptic reviews the spec itself for ambiguity. The docs role updates the spec if the implementation intentionally diverged. Three roles, one consistent API contract.
+- You keep shipping accessibility regressions. The accessibility role runs your approved tools — semantic HTML, keyboard nav, contrast — every time, not just when someone remembers.
 
-### High-stakes environments
+- Security-sensitive changes need a second set of eyes. The security role's structured findings with severity ratings and CVE references give the compliance team what they need without scheduling a meeting.
 
-You are refactoring a payment processor. The implementer is scoped to `src/payments/` and `src/utils/` but `src/fraud/` and `src/compliance/` are denied paths — the AI literally cannot touch fraud detection logic. The security auditor runs `npm audit` and `snyk test` before the mission can close. The skeptic verifies that fraud logic is unchanged without knowing what the implementer intended.
+---
 
-You are updating a patient portal UI in a healthcare application. The implementer is scoped to `frontend/` and `tests/fixtures/mock/` — it cannot reach `backend/`, `db/`, or `config/secrets`. The security auditor scans commits for PHI patterns. The verifier runs a regex sweep for SSN and DOB strings in test fixtures. None of these checks are optional.
+### Education
 
-A junior developer and an AI agent are adding OAuth2 login together. The implementer can write to `src/auth/oauth/` and `tests/auth/` but `src/middleware/` is a denied path — the AI cannot modify the authentication middleware. The security auditor runs `semgrep --config=auth` and must find zero issues. The blind skeptic checks for middleware changes and session handling without knowing what the AI claimed to do.
+- You wrote your first feature in a new framework and want real feedback, not a tutorial. Eight roles review your code the way experienced practitioners would — findings link to specific lines, not generic advice.
 
-You run a nightly CI job that updates dependencies and fixes deprecations. The implementer can modify `package.json`, `package-lock.json`, and `src/`. The verifier must pass unit, integration, and e2e test suites — not just unit tests. The security auditor blocks on moderate-or-higher vulnerabilities from `npm audit`. The mission produces an auditable record of every check that ran.
+- You're mentoring a junior developer. Run `/8eyes` on their project — the structured findings become a teaching syllabus across eight perspectives, not just yours.
 
-Two developers are running AI agents simultaneously — one fixing API rate limiting, the other optimizing database queries. Each mission scopes its implementer to different paths. `src/db/connection.js` is a denied path for both. The agents cannot create merge conflicts in critical shared files because the hook layer enforces path separation at tool time.
+---
+
+### Custom Roles
+
+- Your project needs i18n verification. Define `--custom-role "name=i18n-checker,scope=read_only,commands=grep -r 'hardcoded string' src/"` — it runs alongside the other roles with the same enforcement.
+
+- You have license compliance requirements. A custom role runs your license checker, can't edit files, and reports in the same schema. The verifier confirms findings are addressed before close.
+
+- You need every API endpoint to match the OpenAPI spec. A custom verifier runs your contract tests, the skeptic reviews the spec for ambiguity, the docs role updates it if the implementation diverged.
+
+---
+
+### High-Stakes Environments
+
+- You're refactoring a payment processor. The implementer is scoped to `src/payments/` — `src/fraud/` is a denied path. The security auditor runs `snyk test` before close. The blind skeptic verifies fraud logic is unchanged.
+
+- You're updating a patient portal UI. The implementer can reach `frontend/` but not `backend/`, `db/`, or `config/secrets`. The security auditor scans for PHI patterns. The verifier runs a regex sweep for SSN and DOB in test fixtures.
+
+- A junior dev and an AI are adding OAuth2 login. The implementer can write to `src/auth/oauth/` but `src/middleware/` is denied — nobody can modify authentication middleware. The security auditor runs `semgrep --config=auth` and must find zero issues.
+
+- Your nightly CI job updates dependencies. The verifier must pass unit, integration, and e2e suites — not just unit tests. The security auditor blocks on moderate-or-higher vulnerabilities.
+
+- Two developers run AI agents simultaneously on different tasks. Each mission scopes its implementer to different paths. Shared critical files are denied to both — no merge conflicts in files that matter.
 
 ## Quick Start
 
