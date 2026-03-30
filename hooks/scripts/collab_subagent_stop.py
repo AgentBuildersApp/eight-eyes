@@ -18,18 +18,23 @@ def save_manifest(ctx) -> None:
     atomic_write_json(ctx.manifest_path, ctx.manifest)
 
 
-def _fail_open(exc: Exception) -> int:
-    """Log hook failures and fail open instead of crashing the session."""
-    print(f"[collab] collab_subagent_stop hook error: {exc}", file=sys.stderr)
-    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
-    try:
-        from collab_common import load_active_context, append_ledger
-        ctx = load_active_context(Path(".").resolve())
-        if ctx:
-            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
-    except Exception:
-        pass  # Double-defense: if ledger write fails, still fail-open
-    return 0
+from core.circuit_breaker import HookCircuitBreaker
+
+_breaker = HookCircuitBreaker("collab_subagent_stop", failure_mode="block")
+
+
+# Legacy _fail_open retained as comment for reference:
+# def _fail_open(exc: Exception) -> int:
+#     print(f"[collab] collab_subagent_stop hook error: {exc}", file=sys.stderr)
+#     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+#     try:
+#         from collab_common import load_active_context, append_ledger
+#         ctx = load_active_context(Path(".").resolve())
+#         if ctx:
+#             append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+#     except Exception:
+#         pass
+#     return 0
 
 
 def _main() -> int:
@@ -143,15 +148,24 @@ def _main() -> int:
 
 
 def main() -> int:
-    try:
-        return _main()
-    except Exception as exc:
-        return _fail_open(exc)
+    from collab_common import load_active_context, print_json, stop_block
+
+    def _on_escalate(ctx, reason):
+        """Escalate to user when result validation crashes."""
+        from collab_common import atomic_write_json, utc_now
+
+        ctx.manifest["awaiting_user"] = True
+        ctx.manifest["awaiting_user_reason"] = reason
+        ctx.manifest["updated_at"] = utc_now()
+        atomic_write_json(ctx.manifest_path, ctx.manifest)
+        print_json(stop_block(f"[COLLAB] FAIL-CLOSED: {reason}"))
+
+    return _breaker.execute_with_resilience(
+        main_fn=_main,
+        ctx_loader=lambda: load_active_context(Path(".").resolve()),
+        on_escalate=_on_escalate,
+    )
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        _fail_open(exc)
-        raise SystemExit(0)
+    raise SystemExit(main())

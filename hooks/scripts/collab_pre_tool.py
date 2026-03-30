@@ -64,24 +64,37 @@ def _custom_role_bash_policy(role_config: dict, manifest: dict) -> str:
     return "read-only"
 
 
-def _fail_open(exc: Exception) -> int:
-    """Log hook failures and always allow the tool call to proceed (unless fail-closed)."""
-    print(f"[collab] collab_pre_tool hook error: {exc}", file=sys.stderr)
-    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
-    try:
-        from collab_common import load_active_context, append_ledger
-        ctx = load_active_context(Path(".").resolve())
-        if ctx:
-            append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
-            # Check if fail-closed mode is enabled
-            if ctx.manifest.get("fail_closed"):
-                from collab_common import pretool_deny, print_json
-                print(f"[collab] FAIL-CLOSED: blocking due to hook error", file=sys.stderr)
-                print_json(pretool_deny(f"Hook error in fail-closed mode: {exc}"))
-                return 0
-    except Exception:
-        pass  # Double-defense: if ledger write fails, still fail-open
-    return 0
+from core.circuit_breaker import HookCircuitBreaker
+
+_breaker = HookCircuitBreaker("collab_pre_tool", failure_mode="deny")
+
+
+def _on_deny(reason: str) -> None:
+    """Block the tool call when the pre_tool hook crashes in fail-closed mode."""
+    from collab_common import pretool_deny, print_json
+
+    print_json(pretool_deny(
+        f"[COLLAB] FAIL-CLOSED: Hook error -- action blocked for safety. "
+        f"{reason[:100]}"
+    ))
+
+
+# Legacy _fail_open retained as comment for reference:
+# def _fail_open(exc: Exception) -> int:
+#     print(f"[collab] collab_pre_tool hook error: {exc}", file=sys.stderr)
+#     traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+#     try:
+#         from collab_common import load_active_context, append_ledger
+#         ctx = load_active_context(Path(".").resolve())
+#         if ctx:
+#             append_ledger(ctx, {"kind": "hook_error", "hook": __file__, "error": str(exc)})
+#             if ctx.manifest.get("fail_closed"):
+#                 from collab_common import pretool_deny, print_json
+#                 print_json(pretool_deny(f"Hook error in fail-closed mode: {exc}"))
+#                 return 0
+#     except Exception:
+#         pass
+#     return 0
 
 
 def _main() -> int:
@@ -388,15 +401,14 @@ def _main() -> int:
 
 
 def main() -> int:
-    try:
-        return _main()
-    except Exception as exc:
-        return _fail_open(exc)
+    from collab_common import load_active_context
+
+    return _breaker.execute_with_resilience(
+        main_fn=_main,
+        ctx_loader=lambda: load_active_context(Path(".").resolve()),
+        on_deny=_on_deny,
+    )
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        _fail_open(exc)
-        raise SystemExit(0)
+    raise SystemExit(main())
