@@ -1,6 +1,6 @@
 # Smoke Test Checklist
 
-Manual end-to-end test for validating the collab plugin on a real Claude
+Manual end-to-end test for validating eight-eyes on a real Claude
 Code session.  Run through each step in order.  Every step must pass.
 
 ---
@@ -10,7 +10,7 @@ Code session.  Run through each step in order.  Every step must pass.
 - [ ] Claude Code CLI installed and working
 - [ ] Python 3.10+ available as `python3` (or `python` on Windows)
 - [ ] Git repository initialized in the test directory
-- [ ] Plugin installed: `claude plugin add ./collab`
+- [ ] Plugin installed: `python3 install.py`
 - [ ] Plugin visible in `claude plugin list`
 
 ---

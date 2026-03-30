@@ -216,8 +216,8 @@ The hook layer intercepts at four points:
 | Hook | What it enforces |
 |------|-----------------|
 | `SubagentStart` | Injects role context, blind-review barriers, REVIEW.md criteria; records role dispatch timing and model identity |
-| `PreToolUse` | Blocks out-of-scope writes, unapproved Bash, path violations; double-defense `_fail_open` with optional fail-closed mode |
-| `PostToolUse` | Records every tool action to the evidence ledger; reverts unauthorized writes for read-only roles via `git checkout` or `unlink` |
+| `PreToolUse` | Blocks out-of-scope writes and unapproved commands before execution |
+| `PostToolUse` | Records tool actions; automatically reverts unauthorized writes for read-only roles |
 | `SubagentStop` | Requires structured result block before the role can finish; records role completion timing (duration, finding count) |
 
 An additional `Stop` hook prevents the session from ending while required audit results are still missing.
@@ -313,7 +313,7 @@ Worktree isolation is used where incidental writes or tool artifacts would other
 
 ## Testing
 
-148 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, the collabctl CLI, parallel audit phase, TDD hook enforcement, circuit breaker resilience, and mission resilience (timeout, stale warning, failure tracking, REVIEW.md, dry-run). Stdlib only, no external dependencies.
+148 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, CLI operations, parallel audit, TDD enforcement, and mission resilience. Stdlib only, no external dependencies.
 
 ```bash
 python3 -m pytest tests/ -q

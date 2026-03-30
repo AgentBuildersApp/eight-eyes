@@ -23,7 +23,7 @@ Run the command from the repository that owns the active mission. The migrator u
 - New CLI commands: `collabctl timeline` (role dispatch/completion timing), `collabctl report` (consolidated findings across roles).
 - New CLI flags: `--model-map`, `--default-model`, `--fail-closed`, `--skip-role`, `--force-close`.
 - Close-time scope verification compares git diff against `allowed_paths` and blocks if out-of-scope files were modified. Use `--force-close` to override.
-- `PostToolUse` now performs compensating reverts for read-only role write violations.
+- `PostToolUse` now performs automatic reverts for read-only role write violations.
 
 ### Breaking Changes
 

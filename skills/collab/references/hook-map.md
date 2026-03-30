@@ -114,11 +114,10 @@ No decision output.  Side effects:
 
 ---
 
-## Fail-Open / Fail-Closed Behavior
+## Error Handling
 
-All hooks use a double-defense `_fail_open` pattern: if the hook itself
-raises an exception (missing manifest, malformed JSON, etc.), the default
-behavior is to allow the tool call so the session is not bricked by a hook
-bug.  When `manifest.fail_closed` is `true`, the `PreToolUse` hook inverts
-this default and denies on error instead.  Hook errors are always recorded
-as `hook_error` events in the ledger regardless of mode.
+If a hook raises an exception (missing manifest, malformed JSON, etc.), the
+default behavior is to allow the tool call so the session is not blocked by
+a hook bug. When `manifest.fail_closed` is `true`, the `PreToolUse` hook
+denies on error instead. Hook errors are recorded as `hook_error` events
+in the ledger regardless of mode.

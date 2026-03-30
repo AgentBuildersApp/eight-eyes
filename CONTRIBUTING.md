@@ -56,28 +56,23 @@ Before opening a change, also run:
 python3 scripts/collabctl.py --cwd . verify
 ```
 
-## Defense-in-Depth Layers
+## Error Handling in Hooks
 
-Every hook implements a double-defense `_fail_open` pattern. If hook code raises an exception -- missing manifest, malformed JSON, unexpected schema -- the default behavior is to allow the tool call so the session is not bricked by a hook bug. (For security-critical missions, enable `--fail-closed` to deny on error instead -- see Security Considerations below.) The exception is logged as a `hook_error` event in the ledger for post-hoc review.
+All hooks use a default-allow pattern so that a bug in the hook does not brick the session. If your hook raises an exception, the tool call is allowed by default (or denied if `--fail-closed` is set). The exception is logged to the ledger.
 
-This means two layers of protection exist for every enforced rule:
-
-1. **PreToolUse** blocks the call before it executes.
-2. **PostToolUse** detects and reverts unauthorized writes after execution (compensating control for read-only roles).
-
-When contributing a new hook or modifying an existing one, wrap the enforcement logic in `_fail_open` and confirm both layers are tested.
+When contributing a hook, wrap your enforcement logic in the error handler and add tests for both the success path and the error path.
 
 ## Security Considerations
 
 - **Fail-closed mode**: When `manifest.fail_closed` is `true`, the `PreToolUse` hook denies on error instead of allowing. Use this for security-critical missions where a hook failure should halt work rather than permit unscoped access.
-- **PostToolUse revert**: Read-only roles have a compensating revert. If a write slips past `PreToolUse`, `PostToolUse` restores tracked files via `git checkout` and removes untracked files. The revert is recorded as a `scope_violation_reverted` ledger event.
+- **PostToolUse revert**: Read-only roles have a automatic revert. If a write slips past `PreToolUse`, `PostToolUse` restores tracked files via `git checkout` and removes untracked files. The revert is recorded as a `scope_violation_reverted` ledger event.
 - **Close-time scope verification**: `collabctl close` compares the current `git diff` against `allowed_paths` and blocks if out-of-scope files were modified. `--force-close` overrides with a logged reason.
 
 ## Code Quality Standards
 
 - Every function has a docstring.
-- Every audit finding gets fixed or explicitly blocks advancement. There are no "nice to have" failures in the mission path.
+- Every test failure or audit finding must be resolved before the phase can advance.
 - Tests come before advancement. If a phase cannot be verified, it does not pass.
 - Python stays 100% stdlib. Do not add pip dependencies.
-- Docs and metadata must describe the behavior that ships, not the behavior a future wave might add.
+- Docs and metadata must describe the behavior that ships, not planned features.
 

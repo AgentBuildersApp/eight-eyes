@@ -63,10 +63,8 @@ See `references/result-schemas.md` for the exact field requirements validated by
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed only if the command is read-only (e.g., `grep`,
 `cat`, `git log`, `git diff`, `find`, `wc`).  Commands that modify state
-(`rm`, `mv`, `git commit`, `npm install`, etc.) are blocked.  As a safety
-net, the `PostToolUse` hook performs compensating reverts for any writes
-that slip past the `PreToolUse` check -- tracked files are restored via
-`git checkout` and untracked files are removed.
+(`rm`, `mv`, `git commit`, `npm install`, etc.) are blocked.  As a safety net, any writes that bypass the pre-check are automatically
+reverted.
 
 **Blind review**: The skeptic does NOT receive the implementer's diff or
 commit message in its initial context.  It reads the codebase independently
@@ -93,8 +91,7 @@ See `references/result-schemas.md` for the exact field requirements validated by
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
 `manifest.security_scan_commands` (e.g., `semgrep`, `trufflehog`,
-`gitleaks`, `bandit`).  The `PostToolUse` hook performs compensating
-reverts for any writes that bypass the pre-tool check.
+`gitleaks`, `bandit`).  Any writes that bypass the pre-check are automatically reverted.
 
 **Result schema**: Standard result object.  `findings` lists
 vulnerabilities.  Each finding should include severity (critical, high,
@@ -120,8 +117,7 @@ network communication.
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
 `manifest.benchmark_commands` (e.g., `hyperfine`, `time`, `node --prof`,
-`py-spy`).  The `PostToolUse` hook performs compensating reverts for any
-writes that bypass the pre-tool check.
+`py-spy`).  Any writes that bypass the pre-check are automatically reverted.
 
 **Result schema**: Standard result object.  `findings` lists performance
 concerns with complexity analysis where applicable.
@@ -145,9 +141,7 @@ performance matters.
 
 **Scope rules**: All `Write`, `Edit`, and `MultiEdit` calls are blocked.
 `Bash` calls are allowed for read-only commands plus commands listed in
-`manifest.a11y_commands` (e.g., `axe`, `pa11y`, `lighthouse`).  The
-`PostToolUse` hook performs compensating reverts for any writes that bypass
-the pre-tool check.
+`manifest.a11y_commands` (e.g., `axe`, `pa11y`, `lighthouse`).  Any writes that bypass the pre-check are automatically reverted.
 
 **Result schema**: Standard result object.  `findings` lists accessibility
 violations with WCAG criteria references.
