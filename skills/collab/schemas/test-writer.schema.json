@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/test-writer.schema.json",
+  "title": "Test Writer Result",
+  "description": "Result schema for the test-writer role. The test writer creates or updates tests within test_paths.",
+  "type": "object",
+  "required": ["role", "status", "summary", "test_files_created", "coverage_targets", "test_count", "edge_cases_covered"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "test-writer"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked"],
+      "description": "Whether test writing finished or is blocked."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph summary of tests written."
+    },
+    "test_files_created": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relative paths to test files created or modified."
+    },
+    "coverage_targets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Source symbols or paths targeted by the tests (e.g., 'src/auth.py::validate_token')."
+    },
+    "test_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of test cases written."
+    },
+    "edge_cases_covered": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Edge cases explicitly tested (e.g., 'empty input', 'expired token', 'malformed JWT')."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "test-writer",
+      "status": "complete",
+      "summary": "Added 12 tests covering JWT validation, token refresh, and error handling for expired and malformed tokens.",
+      "test_files_created": ["tests/test_auth.py", "tests/test_token_refresh.py"],
+      "coverage_targets": ["src/auth.py::validate_token", "src/auth.py::refresh_token", "src/middleware.py::require_auth"],
+      "test_count": 12,
+      "edge_cases_covered": ["expired token", "malformed JWT header", "missing refresh token", "revoked token", "empty authorization header"]
+    }
+  ]
+}

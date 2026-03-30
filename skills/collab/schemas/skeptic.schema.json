@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/skeptic.schema.json",
+  "title": "Skeptic Result",
+  "description": "Result schema for the skeptic role. The skeptic performs blind review without seeing the implementer's narrative, looking for hidden coupling, rollback risk, and anchoring bias.",
+  "type": "object",
+  "required": ["role", "summary", "recommendation", "findings"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "skeptic"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph review summary."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["approve", "needs_changes", "abort"],
+      "description": "Overall recommendation for the change."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "issue"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"],
+            "description": "Finding severity level."
+          },
+          "issue": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Description of the issue found."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path where the issue was found."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number in the file."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete evidence from the code or diff."
+          }
+        }
+      },
+      "description": "List of findings. Each must include severity and issue description."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "skeptic",
+      "summary": "Token refresh endpoint is untested and the error path returns a bare 500 with no user-facing message.",
+      "recommendation": "needs_changes",
+      "findings": [
+        {
+          "severity": "high",
+          "issue": "Token refresh endpoint has no test coverage. If the refresh token is expired, the user hits a bare 500.",
+          "path": "src/routes/token.py",
+          "line": 42,
+          "evidence": "No test file references refresh_token. The except block at line 42 raises HTTPException(500) with no detail."
+        }
+      ]
+    }
+  ]
+}

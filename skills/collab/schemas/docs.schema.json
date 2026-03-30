@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/docs.schema.json",
+  "title": "Docs Result",
+  "description": "Result schema for the docs role. The docs writer updates user-facing documentation within doc_paths.",
+  "type": "object",
+  "required": ["role", "status", "summary", "docs_updated", "docs_created"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "docs"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked"],
+      "description": "Whether documentation work finished or is blocked."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph summary of documentation changes."
+    },
+    "docs_updated": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relative paths to documentation files that were updated."
+    },
+    "docs_created": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relative paths to documentation files that were newly created."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "docs",
+      "status": "complete",
+      "summary": "Updated README with new auth flow diagram and added migration guide for JWT transition.",
+      "docs_updated": ["README.md", "docs/api.md"],
+      "docs_created": ["docs/migration-jwt.md"]
+    }
+  ]
+}

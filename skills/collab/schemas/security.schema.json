@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/security.schema.json",
+  "title": "Security Result",
+  "description": "Result schema for the security role. The security auditor reviews for auth bypass, injection, secrets exposure, and fail-open logic using read-only tools and approved scan commands.",
+  "type": "object",
+  "required": ["role", "summary", "recommendation", "findings", "scan_commands_run"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "security"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph security assessment."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["approve", "needs_changes", "abort"],
+      "description": "Overall security recommendation."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"],
+            "description": "Finding severity level."
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Security category (e.g., injection, authentication, authorization, cryptography, secrets, configuration)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number."
+          },
+          "issue": {
+            "type": "string",
+            "description": "Description of the security issue."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Code snippet or scan output proving the issue."
+          },
+          "cwe": {
+            "type": "string",
+            "description": "CWE identifier if applicable (e.g., CWE-89, CWE-327)."
+          }
+        }
+      },
+      "description": "Security findings with category, severity, and evidence."
+    },
+    "scan_commands_run": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Security scan commands executed during the review."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "security",
+      "summary": "Critical algorithm confusion vulnerability in JWT validation. The decode call uses HS256 but the key is an RSA public key, allowing token forgery.",
+      "recommendation": "needs_changes",
+      "findings": [
+        {
+          "severity": "critical",
+          "category": "cryptography",
+          "path": "src/auth.py",
+          "line": 23,
+          "issue": "JWT algorithm confusion: jwt.decode() uses algorithms=['HS256'] but the key is an RSA public key. An attacker can forge tokens by signing with the public key as an HMAC secret.",
+          "evidence": "jwt.decode(token, RSA_PUBLIC_KEY, algorithms=['HS256'])",
+          "cwe": "CWE-327"
+        }
+      ],
+      "scan_commands_run": ["bandit -r src/", "gitleaks detect --source ."]
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/performance.schema.json",
+  "title": "Performance Result",
+  "description": "Result schema for the performance role. The performance profiler checks for N+1 patterns, algorithmic blowups, latency regressions, and memory issues using read-only tools and approved benchmark commands.",
+  "type": "object",
+  "required": ["role", "summary", "recommendation", "findings", "benchmarks_run"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "performance"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph performance assessment."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["approve", "needs_changes", "abort"],
+      "description": "Overall performance recommendation."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"],
+            "description": "Finding severity level."
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Performance category (e.g., algorithmic, query, memory, latency, bundlesize)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number."
+          },
+          "issue": {
+            "type": "string",
+            "description": "Description of the performance issue."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Benchmark output, code snippet, or profiling data."
+          }
+        }
+      },
+      "description": "Performance findings with category, severity, and evidence."
+    },
+    "benchmarks_run": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Benchmark commands executed during the review."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "performance",
+      "summary": "No N+1 patterns detected. Token validation adds approximately 2ms per request, within budget. One medium-severity nested loop found in user search.",
+      "recommendation": "approve",
+      "findings": [
+        {
+          "severity": "medium",
+          "category": "algorithmic",
+          "path": "src/search.py",
+          "line": 58,
+          "issue": "Nested loop O(n*m) in user search when both users and roles are large.",
+          "evidence": "Lines 58-72: for user in users: for role in roles: if role.id == user.role_id"
+        }
+      ],
+      "benchmarks_run": ["pytest --benchmark-only tests/bench/"]
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/accessibility.schema.json",
+  "title": "Accessibility Result",
+  "description": "Result schema for the accessibility role. The accessibility checker reviews for keyboard traps, missing labels, semantic and contrast failures using read-only tools and approved a11y commands.",
+  "type": "object",
+  "required": ["role", "summary", "recommendation", "findings", "a11y_commands_run"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "accessibility"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph accessibility assessment."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["approve", "needs_changes", "abort"],
+      "description": "Overall accessibility recommendation."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"],
+            "description": "Finding severity level."
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Accessibility category (e.g., aria, keyboard, contrast, semantics, focus, motion)."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number."
+          },
+          "issue": {
+            "type": "string",
+            "description": "Description of the accessibility issue."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "HTML snippet, axe-core output, or screenshot reference."
+          },
+          "wcag": {
+            "type": "string",
+            "description": "WCAG success criterion reference (e.g., 2.1-AA-4.1.2)."
+          }
+        }
+      },
+      "description": "Accessibility findings with category, severity, and WCAG reference."
+    },
+    "a11y_commands_run": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Accessibility audit commands executed during the review."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "accessibility",
+      "summary": "Login form passes axe-core audit. Error states have aria-live regions. One button missing accessible label found.",
+      "recommendation": "needs_changes",
+      "findings": [
+        {
+          "severity": "high",
+          "category": "aria",
+          "path": "src/components/Login.tsx",
+          "line": 42,
+          "issue": "Submit button has no accessible label. Screen readers will announce it as an unnamed button.",
+          "evidence": "<button onClick={handleLogin}><Icon name='arrow-right' /></button>",
+          "wcag": "2.1-AA-4.1.2"
+        }
+      ],
+      "a11y_commands_run": ["npx axe-core src/"]
+    }
+  ]
+}

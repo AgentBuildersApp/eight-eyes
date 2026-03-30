@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/verifier.schema.json",
+  "title": "Verifier Result",
+  "description": "Result schema for the verifier role. The verifier checks every acceptance criterion using only approved verification commands. Each criterion must be independently evaluated with evidence.",
+  "type": "object",
+  "required": ["role", "summary", "recommendation", "criteria_results"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "verifier"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph verification summary."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["pass", "fail", "needs_changes"],
+      "description": "Overall verification outcome."
+    },
+    "criteria_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["criterion", "status"],
+        "properties": {
+          "criterion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact text of the acceptance criterion from the manifest."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail", "not-run"],
+            "description": "Whether the criterion was met, failed, or could not be evaluated."
+          },
+          "evidence": {
+            "description": "Proof of the criterion's status. Required when status is pass or fail.",
+            "oneOf": [
+              { "type": "string", "minLength": 1 },
+              { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+            ]
+          }
+        }
+      },
+      "description": "One entry per acceptance criterion. Must exactly match manifest criteria count."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "verifier",
+      "summary": "4 of 5 criteria pass. Token refresh rotation is not implemented -- the refresh endpoint reuses the same token.",
+      "recommendation": "needs_changes",
+      "criteria_results": [
+        {
+          "criterion": "JWT tokens use RS256 signing",
+          "status": "pass",
+          "evidence": ["src/auth.py line 15: jwt.encode(payload, RSA_PRIVATE_KEY, algorithm='RS256')"]
+        },
+        {
+          "criterion": "Token refresh endpoint returns new access token",
+          "status": "pass",
+          "evidence": ["curl -X POST /auth/refresh: response contains new access_token"]
+        },
+        {
+          "criterion": "Refresh token rotation on use",
+          "status": "fail",
+          "evidence": ["curl output shows identical refresh_token in request and response. No rotation."]
+        },
+        {
+          "criterion": "Expired tokens return 401 with error message",
+          "status": "pass",
+          "evidence": ["curl with expired token: HTTP 401 {\"error\": \"token_expired\", \"message\": \"Token has expired\"}"]
+        },
+        {
+          "criterion": "All existing tests pass",
+          "status": "pass",
+          "evidence": ["pytest -q: 20 passed in 1.2s"]
+        }
+      ]
+    }
+  ]
+}

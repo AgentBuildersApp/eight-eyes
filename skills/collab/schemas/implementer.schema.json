@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AgentBuildersApp/eight-eyes/schemas/implementer.schema.json",
+  "title": "Implementer Result",
+  "description": "Result schema for the implementer role. The implementer makes code changes within allowed_paths and reports what changed.",
+  "type": "object",
+  "required": ["role", "status", "summary", "changed_paths", "artifacts", "tests_run"],
+  "properties": {
+    "role": {
+      "type": "string",
+      "const": "implementer"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked"],
+      "description": "Whether the implementation finished or is blocked on a dependency."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph summary of what changed and why."
+    },
+    "changed_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Relative paths to files created or modified."
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Brief evidence items describing what was produced."
+    },
+    "tests_run": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Test commands executed and their outcomes. Empty array if no tests were run."
+    }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "role": "implementer",
+      "status": "complete",
+      "summary": "Refactored auth module to use JWT tokens with RS256 signing. Added token refresh endpoint and updated middleware.",
+      "changed_paths": ["src/auth.py", "src/middleware.py", "src/routes/token.py"],
+      "artifacts": ["JWT signing with RS256", "Token refresh endpoint at /auth/refresh"],
+      "tests_run": ["pytest tests/test_auth.py -q: 8 passed"]
+    }
+  ]
+}
