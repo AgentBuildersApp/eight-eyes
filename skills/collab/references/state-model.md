@@ -96,7 +96,7 @@ worktree checkouts.
   "doc_paths": [
     "docs/**",
     "README.md",
-    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "*.md"
   ],
 

@@ -83,7 +83,7 @@ LEGAL_TRANSITIONS_TDD = {
 }
 
 DEFAULT_TEST_PATHS = ["tests/", "test/", "__tests__/"]
-DEFAULT_DOC_PATHS = ["docs/", "README.md", "CHANGELOG.md"]
+DEFAULT_DOC_PATHS = ["docs/", "README.md", "CONTRIBUTING.md"]
 DEFAULT_DENIED_PATHS = [".git", ".env", "secrets", "node_modules"]
 ROLE_STATUS_ORDER = [
     "implementer",
@@ -693,8 +693,13 @@ def _verify_close_scope(manifest: dict, project_root: Path) -> list[str]:
     if not allowed:
         return []
 
+    # Paths that are never scope violations (plugin internals, git state)
+    _EXCLUDED_PREFIXES = (".claude/", ".git/", ".github/", "node_modules/", ".internal/")
+
     violations = []
     for f in changed_files:
+        if any(f.startswith(ex) for ex in _EXCLUDED_PREFIXES):
+            continue
         if not any(f.startswith(a) or f == a for a in allowed):
             violations.append(f)
     return violations
@@ -850,7 +855,7 @@ def cmd_migrate(args):
 
     if current_version == 1:
         manifest.setdefault("test_paths", ["tests/", "test/", "__tests__/"])
-        manifest.setdefault("doc_paths", ["docs/", "README.md", "CHANGELOG.md"])
+        manifest.setdefault("doc_paths", ["docs/", "README.md", "CONTRIBUTING.md"])
         manifest.setdefault("security_scan_commands", [])
         manifest.setdefault("benchmark_commands", [])
         manifest.setdefault("a11y_commands", [])
