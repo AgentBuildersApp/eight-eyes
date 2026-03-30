@@ -542,6 +542,16 @@ def cmd_status(args):
         for detail in _role_summary_lines(result):
             lines.append(f"  {detail}")
 
+    crash_warnings = manifest.get("crash_warnings", [])
+    if crash_warnings:
+        lines.append("WARNINGS:")
+        for warning in crash_warnings:
+            hook = warning.get("hook", "unknown")
+            ts = warning.get("ts", "?")
+            error = warning.get("error", "unknown error")
+            lines.append(f"  - {hook} crashed at {ts}: {error}")
+        lines.append("  Run 'collabctl show' for full details.")
+
     print("\n".join(lines))
     return 0
 
@@ -1009,6 +1019,17 @@ def cmd_report(args):
         lines.append(f"  hook_error events in ledger: {hook_errors}")
     else:
         lines.append("  No hook errors recorded.")
+
+    crash_warnings = manifest.get("crash_warnings", [])
+    if crash_warnings:
+        lines.append("")
+        lines.append("## Crash Warnings")
+        for warning in crash_warnings:
+            hook = warning.get("hook", "unknown")
+            ts = warning.get("ts", "?")
+            error = warning.get("error", "unknown error")
+            lines.append(f"  - {hook} crashed at {ts}: {error}")
+        lines.append("  Run 'collabctl show' for full details.")
 
     print("\n".join(lines))
     return 0
