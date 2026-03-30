@@ -35,3 +35,4 @@ COLLAB_RESULT_JSON_END
 If you are blocked, use `status=blocked` and explain the blocker in `summary`.
 
 **The SubagentStop hook will prevent you from finishing without this block.**
+

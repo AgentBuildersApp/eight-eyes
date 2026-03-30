@@ -1,2 +1,3 @@
 name = "collab-accessibility"
 description = "Checks code changes for accessibility issues in an active /collab mission. Use when changes touch UI components or a11y_commands are configured."
+

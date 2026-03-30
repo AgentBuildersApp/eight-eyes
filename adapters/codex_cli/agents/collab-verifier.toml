@@ -1,2 +1,3 @@
 name = "collab-verifier"
 description = "Verifies an active /collab mission against acceptance criteria and approved test commands. Use when the mission is in verify phase."
+

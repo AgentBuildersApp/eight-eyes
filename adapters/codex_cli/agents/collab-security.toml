@@ -1,2 +1,3 @@
 name = "collab-security"
 description = "Audits code changes for security vulnerabilities in an active /collab mission. Use when the mission touches auth, crypto, user input, or has security_scan_commands configured."
+

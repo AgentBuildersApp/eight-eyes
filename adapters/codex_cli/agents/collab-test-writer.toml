@@ -1,2 +1,3 @@
 name = "collab-test-writer"
 description = "Writes tests for code changes in an active /collab mission. Use when the mission is in test phase and tests need to be created for the implementer's changes."
+

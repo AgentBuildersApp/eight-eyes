@@ -26,3 +26,4 @@ Note: On Codex CLI, `PreToolUse` hooks only intercept Bash commands. Write/Edit 
 - `collab-accessibility`: Checks code changes for accessibility issues in an active `/collab` mission.
 - `collab-docs`: Updates documentation for verified changes in an active `/collab` mission.
 - `collab-verifier`: Verifies an active `/collab` mission against acceptance criteria and approved test commands.
+

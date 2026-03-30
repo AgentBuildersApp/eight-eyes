@@ -33,3 +33,4 @@ COLLAB_RESULT_JSON_END
 - `criteria_results[].evidence`: Array of concrete evidence strings.
 
 **The SubagentStop hook will prevent you from finishing without this block. The verifier must report on every criterion.**
+
