@@ -21,3 +21,4 @@ Security-critical hooks deny the action on error. Other hooks still allow.
 | `stop` | Allow | Allow + warn | Session exits, warning persisted for next session |
 
 Hooks that deny on error will retry twice before escalating. If all retries fail, the user is notified.
+

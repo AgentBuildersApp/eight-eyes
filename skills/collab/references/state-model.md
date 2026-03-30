@@ -319,3 +319,4 @@ self-contained JSON object.
 
 The ledger can be trimmed with `collabctl ledger-trim --before <date>` to
 remove old entries and keep the file compact.
+

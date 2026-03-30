@@ -167,3 +167,4 @@ with this schema:
 5. After all phases complete, run `collabctl close pass` (or `abort`).
 6. Report the mission summary to the user.
 
+

@@ -199,3 +199,4 @@ Code session.  Run through each step in order.  Every step must pass.
 
 - [ ] All 21 sections pass: **SMOKE TEST PASSED**
 - [ ] Any section fails: document the failure, file an issue
+

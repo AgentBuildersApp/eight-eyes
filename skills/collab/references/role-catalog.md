@@ -202,3 +202,4 @@ See `references/result-schemas.md` for the exact field requirements validated by
 ## Result Schema Reference
 
 See `references/result-schemas.md` for the exact JSON schemas validated by the SubagentStop hook.
+

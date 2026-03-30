@@ -121,3 +121,4 @@ default behavior is to allow the tool call so the session is not blocked by
 a hook bug. When `manifest.fail_closed` is `true`, the `PreToolUse` hook
 denies on error instead. Hook errors are recorded as `hook_error` events
 in the ledger regardless of mode.
+

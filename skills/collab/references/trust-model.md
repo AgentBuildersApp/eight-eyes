@@ -48,3 +48,4 @@ restored via git, untracked files are removed.
 When a mission loops back for changes, results from the previous
 iteration are automatically invalidated. Only current-iteration
 results count toward mission completion.
+
