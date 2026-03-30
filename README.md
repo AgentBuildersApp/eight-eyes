@@ -247,7 +247,9 @@ Each role is modeled on how experienced practitioners narrow their failure surfa
 | `close pass\|abort` | Closes the active mission and clears the active pointer. Runs close-time scope verification. Use `--force-close` with a reason to override scope violations. |
 | `ledger-trim` | Archives older ledger entries, keeps the most recent N. |
 | `migrate` | Migrates the active mission to the latest schema version. |
-| `verify` | Verifies repo layout, hooks, commands, adapters, and installer. |
+| `verify` | Verifies repo layout, hooks, commands, adapters, and installer. Use `--install-only` to check files without requiring a git repo. |
+| `locate` | Prints all known eight-eyes install locations and whether each exists. |
+| `--version` | Prints the version string from the VERSION file and exits. |
 
 ### Model Routing
 
@@ -311,7 +313,7 @@ Worktree isolation is used where incidental writes or tool artifacts would other
 
 ## Testing
 
-142 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, the collabctl CLI, parallel audit phase, TDD hook enforcement, circuit breaker resilience, and mission resilience (timeout, stale warning, failure tracking, REVIEW.md, dry-run). Stdlib only, no external dependencies.
+148 tests cover all 8 roles, scope enforcement, result validation, lifecycle management, state handling, schema migration, the collabctl CLI, parallel audit phase, TDD hook enforcement, circuit breaker resilience, and mission resilience (timeout, stale warning, failure tracking, REVIEW.md, dry-run). Stdlib only, no external dependencies.
 
 ```bash
 python3 -m pytest tests/ -q
@@ -334,12 +336,17 @@ python3 -m pytest tests/ -q
 | Codex CLI does not block write/edit scope drift | Current Codex hooks enforce Bash only | Treat Codex as experimental; inspect ledger and verifier output |
 | `collabctl close` blocked by scope violation | Files outside `allowed_paths` were modified during the mission | Remove the out-of-scope changes, or use `--force-close "reason"` to override (logged to ledger) |
 | Phase transition to `verify` blocked | Audit roles not yet complete | Complete all audit roles (skeptic, security, performance, accessibility) or use `--skip-role <name>` to explicitly skip |
+| `copilot plugin list` doesn't show eight-eyes | Copilot CLI does not currently expose an installed-plugin listing command | Use `collabctl locate` or `collabctl verify --install-only` instead |
 
 ## Requirements
 
 - Python 3.10+
 - Git
 - One or more: Claude Code, Copilot CLI, Codex CLI
+
+## Naming
+
+The canonical name is `eight-eyes`. The slash command is `/8eyes`. The plugin ID may vary by platform (e.g. `8eyes` on Claude Code, `eight-eyes` on Copilot CLI). Use `collabctl locate` to find all installed instances.
 
 ## License
 

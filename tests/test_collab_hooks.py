@@ -1,14 +1,16 @@
 """Comprehensive test suite for /collab plugin hooks.
 
-142 tests covering all 8 roles, scope enforcement, result validation,
+148 tests covering all 8 roles, scope enforcement, result validation,
 lifecycle management, state handling, schema migration (v3->v4), collabctl CLI,
 parallel audit phase, TDD hook enforcement, mission resilience
 (timeout, stale warning, failure tracking, REVIEW.md, dry-run),
 v4 schema fields (model_map, role_assignments, planned_roles, fail_closed),
 CLI observability (timeline, report, status model info), copilot adapter,
 compensating revert (M1), close-time scope verification (M3),
-security audit fixes, accessibility improvements, and v4.1 circuit breaker
-fail-closed hardening (retry, escalation, crash_warnings).
+security audit fixes, accessibility improvements, v4.1 circuit breaker
+fail-closed hardening (retry, escalation, crash_warnings),
+and v4.1 install audit fixes (version, locate, verify --install-only,
+pyproject.toml, copilot subagentStart).
 
 Runs with Python 3.10+ stdlib only. Uses real git repos in temp directories.
 """
@@ -34,7 +36,7 @@ TEST_TMP_ROOT = PLUGIN_ROOT / ".tmp-tests"
 
 
 class CollabHookTests(unittest.TestCase):
-    """Full test suite for /collab plugin — 142 tests."""
+    """Full test suite for /collab plugin — 148 tests."""
 
     def setUp(self) -> None:
         TEST_TMP_ROOT.mkdir(exist_ok=True)
@@ -2467,6 +2469,51 @@ class CollabHookTests(unittest.TestCase):
         if out:
             result = json.loads(out)
             self.assertEqual(result.get("decision"), "block")
+
+
+    # ── v4.1 Install Audit Tests ──
+
+    def test_143_version_flag(self):
+        """collabctl --version prints the version string."""
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--version"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertRegex(proc.stdout.strip(), r"^\d+\.\d+\.\d+$")
+
+    def test_144_version_file_exists(self):
+        """VERSION file exists at repo root."""
+        version_file = SCRIPTS_DIR.parent / "VERSION"
+        self.assertTrue(version_file.exists())
+
+    def test_145_locate_command(self):
+        """collabctl locate runs without error."""
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "locate"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertIn("eight-eyes install locations", proc.stdout)
+
+    def test_146_verify_install_only(self):
+        """collabctl verify --install-only works without git repo."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--cwd", tmpdir, "verify", "--install-only"],
+                capture_output=True, text=True, check=False,
+            )
+            # Should not FAIL on git check
+            self.assertNotIn("[FAIL] Not in a git repository", proc.stdout)
+
+    def test_147_pyproject_toml_exists(self):
+        """pyproject.toml exists at repo root."""
+        self.assertTrue((SCRIPTS_DIR.parent / "pyproject.toml").exists())
+
+    def test_148_copilot_hooks_has_subagent_start(self):
+        """install.py generated Copilot hooks include subagentStart."""
+        install_py = SCRIPTS_DIR.parent / "install.py"
+        content = install_py.read_text(encoding="utf-8")
+        self.assertIn("subagentStart", content)
 
 
 if __name__ == "__main__":

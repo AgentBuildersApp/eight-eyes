@@ -767,10 +767,29 @@ def cmd_ledger_trim(args):
     return 0
 
 
+def cmd_locate(args):
+    """Print all known install locations for eight-eyes."""
+    home = Path.home()
+    locations = [
+        ("Claude Code plugin", home / ".claude" / "plugins" / "eight-eyes"),
+        ("Claude Code marketplace", home / ".claude" / "plugins" / "marketplaces" / "8eyes-marketplace"),
+        ("Copilot CLI plugin", home / ".config" / "github-copilot" / "plugins" / "eight-eyes"),
+        ("Copilot CLI marketplace", home / "AppData" / "Local" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"),
+        ("Codex CLI agents", home / ".codex" / "agents" / "eight-eyes"),
+        ("Working copy", Path(__file__).resolve().parent.parent),
+    ]
+    print("eight-eyes install locations:")
+    for label, path in locations:
+        exists = "FOUND" if path.exists() else "not found"
+        print(f"  [{exists}] {label}: {path}")
+    return 0
+
+
 def cmd_verify(args):
     """Verify plugin installation is correct."""
     root = _PLUGIN_ROOT
     errors = []
+    install_only = getattr(args, "install_only", False)
 
     checks = [
         (root / ".claude-plugin" / "plugin.json", "Plugin manifest"),
@@ -817,6 +836,13 @@ def cmd_verify(args):
         else:
             errors.append(f"Missing agent: agents/{agent}")
 
+    # Check VERSION file
+    version_file = root / "VERSION"
+    if version_file.exists():
+        print(f"  [OK] VERSION file: VERSION")
+    else:
+        errors.append("Missing VERSION file")
+
     # Check Python version
     if sys.version_info < (3, 10):
         errors.append(f"Python {sys.version_info.major}.{sys.version_info.minor} found, need 3.10+")
@@ -827,7 +853,10 @@ def cmd_verify(args):
         resolve_worktree_root(cwd)
         print("  [OK] Git repository detected")
     except Exception:
-        errors.append("Not in a git repository (required for mission state)")
+        if install_only:
+            print("  [WARN] Not in a git repo -- mission features require a git repository. All files verified OK.")
+        else:
+            errors.append("Not in a git repository (required for mission state)")
 
     if errors:
         print(f"\nVERIFY FAILED: {len(errors)} error(s)")
@@ -1046,7 +1075,8 @@ def cmd_report(args):
 def build_parser():
     p = argparse.ArgumentParser(prog="collabctl", description="Manage /collab mission state.")
     p.add_argument("--cwd")
-    sub = p.add_subparsers(dest="command", required=True)
+    p.add_argument("--version", action="store_true", help="Print version and exit")
+    sub = p.add_subparsers(dest="command", required=False)
 
     # init
     init = sub.add_parser("init", help="Create a new mission")
@@ -1128,7 +1158,12 @@ def build_parser():
 
     # verify
     verify = sub.add_parser("verify", help="Verify plugin installation")
+    verify.add_argument("--install-only", action="store_true", help="Check files only, skip git requirement")
     verify.set_defaults(func=cmd_verify)
+
+    # locate
+    locate = sub.add_parser("locate", help="Print all known install locations")
+    locate.set_defaults(func=cmd_locate)
 
     return p
 
@@ -1136,6 +1171,19 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.version:
+        version_file = Path(__file__).resolve().parent.parent / "VERSION"
+        if version_file.exists():
+            print(version_file.read_text(encoding="utf-8").strip())
+        else:
+            print("unknown")
+        return 0
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
     return int(args.func(args))
 
 

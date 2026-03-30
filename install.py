@@ -11,6 +11,7 @@ Usage:
     python3 install.py --platform codex_cli
     python3 install.py --uninstall  # Remove installed adapters
     python3 install.py --verify     # Check installation
+    python3 install.py --add-to-path  # Also create a CLI shim on PATH
 """
 from __future__ import annotations
 
@@ -107,6 +108,11 @@ def parse_args() -> argparse.Namespace:
         "--verify",
         action="store_true",
         help="Verify the repo assets and any installed adapters for the selected or auto-detected platforms.",
+    )
+    parser.add_argument(
+        "--add-to-path",
+        action="store_true",
+        help="Create a CLI shim in ~/.local/bin/ (or equivalent) for PATH discoverability.",
     )
     return parser.parse_args()
 
@@ -211,6 +217,13 @@ def installed_copilot_hooks(target: Path) -> dict:
                     "powershell": powershell_script("collab_session_start.py"),
                 }
             ],
+            "subagentStart": [
+                {
+                    "type": "command",
+                    "bash": bash_script("collab_subagent_start.py"),
+                    "powershell": powershell_script("collab_subagent_start.py"),
+                }
+            ],
             "subagentStop": [
                 {
                     "type": "command",
@@ -306,6 +319,48 @@ INSTALLERS = {
 }
 
 
+def _print_post_install_guidance(platform: str, target: Path) -> None:
+    """Print user guidance after a successful install."""
+    print()
+    print("  eight-eyes installed successfully!")
+    print()
+    print(f"  Verify:  python3 {target}/scripts/collabctl.py --cwd <your-repo> verify")
+    print(f"  Version: python3 {target}/scripts/collabctl.py --version")
+    print(f"  Usage:   From a git repo, use /8eyes:collab <objective>")
+    print(f"  Locate:  python3 {target}/scripts/collabctl.py locate")
+    print()
+    if platform == "copilot_cli":
+        print("  Note: Restart your Copilot CLI session to pick up the new hooks.")
+    elif platform == "codex_cli":
+        print("  Note: Restart your Codex CLI session to pick up the new hooks.")
+    print()
+
+
+def _install_cli_shim() -> None:
+    """Create a cross-platform CLI shim in ~/.local/bin/ for PATH discoverability."""
+    import os
+    bin_dir = HOME / ".local" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    collabctl = REPO_ROOT / "scripts" / "collabctl.py"
+
+    if sys.platform == "win32":
+        shim_path = bin_dir / "eight-eyes.cmd"
+        shim_content = f'@echo off\r\npython3 "{collabctl}" %*\r\n'
+        shim_path.write_text(shim_content, encoding="utf-8")
+    else:
+        shim_path = bin_dir / "eight-eyes"
+        shim_content = (
+            '#!/usr/bin/env bash\n'
+            f'exec python3 "{collabctl}" "$@"\n'
+        )
+        shim_path.write_text(shim_content, encoding="utf-8")
+        os.chmod(str(shim_path), 0o755)
+
+    print(f"[OK] CLI shim installed: {shim_path}")
+    if str(bin_dir) not in os.environ.get("PATH", ""):
+        print(f"  Add {bin_dir} to your PATH if not already present.")
+
+
 def _cleanup_marketplace_registry() -> None:
     """Remove eight-eyes entries from Claude Code plugin registry files."""
     home = Path.home()
@@ -349,6 +404,16 @@ def _cleanup_marketplace_registry() -> None:
     if mp_dir.exists():
         remove_path(mp_dir)
         print(f"[OK] removed marketplace directory: {mp_dir}")
+    # Copilot CLI marketplace (Windows)
+    copilot_marketplace = home / "AppData" / "Local" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"
+    if copilot_marketplace.exists():
+        remove_path(copilot_marketplace)
+        print(f"[OK] removed Copilot marketplace cache: {copilot_marketplace}")
+    # Copilot CLI marketplace (macOS/Linux)
+    copilot_marketplace_unix = home / ".local" / "share" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"
+    if copilot_marketplace_unix.exists():
+        remove_path(copilot_marketplace_unix)
+        print(f"[OK] removed Copilot marketplace cache: {copilot_marketplace_unix}")
 
 
 def uninstall_platform(platform: str) -> None:
@@ -358,6 +423,17 @@ def uninstall_platform(platform: str) -> None:
         print(f"[OK] removed {platform}: {target}")
     else:
         print(f"[OK] {platform} not installed: {target}")
+    # Copilot CLI: also clean marketplace caches
+    if platform == "copilot_cli":
+        home = Path.home()
+        copilot_mp_win = home / "AppData" / "Local" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"
+        if copilot_mp_win.exists():
+            remove_path(copilot_mp_win)
+            print(f"[OK] removed Copilot marketplace cache: {copilot_mp_win}")
+        copilot_mp_unix = home / ".local" / "share" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"
+        if copilot_mp_unix.exists():
+            remove_path(copilot_mp_unix)
+            print(f"[OK] removed Copilot marketplace cache: {copilot_mp_unix}")
 
 
 def verify_platforms(platforms: list[str]) -> int:
@@ -397,6 +473,10 @@ def main() -> int:
 
     for platform in platforms:
         INSTALLERS[platform](PLATFORM_TARGETS[platform])
+        _print_post_install_guidance(platform, PLATFORM_TARGETS[platform])
+
+    if args.add_to_path:
+        _install_cli_shim()
 
     return 0 if repo_verify() else 1
 
