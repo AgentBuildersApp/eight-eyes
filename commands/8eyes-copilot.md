@@ -12,3 +12,4 @@ Future adapter note for `adapters/copilot_cli/plugin.json`:
 ```
 
 When the Copilot CLI adapter is added, `/8eyes <objective>` should initialize a collab mission through `scripts/collabctl.py`, present the mission plan for approval, and then follow the `skills/collab/SKILL.md` phase workflow.
+
