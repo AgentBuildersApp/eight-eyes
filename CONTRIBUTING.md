@@ -76,3 +76,4 @@ When contributing a hook, wrap your enforcement logic in the error handler and a
 - Python stays 100% stdlib. Do not add pip dependencies.
 - Docs and metadata must describe the behavior that ships, not planned features.
 
+
