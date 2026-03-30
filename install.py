@@ -306,6 +306,51 @@ INSTALLERS = {
 }
 
 
+def _cleanup_marketplace_registry() -> None:
+    """Remove eight-eyes entries from Claude Code plugin registry files."""
+    home = Path.home()
+    # Clean known_marketplaces.json
+    km_path = home / ".claude" / "plugins" / "known_marketplaces.json"
+    if km_path.exists():
+        try:
+            import json as _json
+            data = _json.loads(km_path.read_text(encoding="utf-8"))
+            if "8eyes-marketplace" in data:
+                del data["8eyes-marketplace"]
+                km_path.write_text(
+                    _json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print("[OK] removed 8eyes-marketplace from known_marketplaces.json")
+        except Exception as exc:
+            print(f"[WARN] could not clean known_marketplaces.json: {exc}")
+    # Clean installed_plugins.json
+    ip_path = home / ".claude" / "plugins" / "installed_plugins.json"
+    if ip_path.exists():
+        try:
+            import json as _json
+            data = _json.loads(ip_path.read_text(encoding="utf-8"))
+            plugins = data.get("plugins", {})
+            if "8eyes@8eyes-marketplace" in plugins:
+                del plugins["8eyes@8eyes-marketplace"]
+                ip_path.write_text(
+                    _json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                print("[OK] removed 8eyes@8eyes-marketplace from installed_plugins.json")
+        except Exception as exc:
+            print(f"[WARN] could not clean installed_plugins.json: {exc}")
+    # Clean marketplace cache directory
+    cache_dir = home / ".claude" / "plugins" / "cache" / "8eyes-marketplace"
+    if cache_dir.exists():
+        remove_path(cache_dir)
+        print(f"[OK] removed marketplace cache: {cache_dir}")
+    mp_dir = home / ".claude" / "plugins" / "marketplaces" / "8eyes-marketplace"
+    if mp_dir.exists():
+        remove_path(mp_dir)
+        print(f"[OK] removed marketplace directory: {mp_dir}")
+
+
 def uninstall_platform(platform: str) -> None:
     target = PLATFORM_TARGETS[platform]
     if target.exists() or target.is_symlink():
@@ -338,6 +383,7 @@ def main() -> int:
     if args.uninstall:
         for platform in platforms:
             uninstall_platform(platform)
+        _cleanup_marketplace_registry()
         if not platforms:
             print("No supported platform installations detected.")
         return 0
