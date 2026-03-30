@@ -123,12 +123,22 @@ def selected_platforms(requested: list[str] | None) -> list[str]:
     return [name for name, detector in PLATFORM_DETECTORS.items() if detector()]
 
 
+def _on_rm_error(_func: object, path: str, _exc_info: object) -> None:
+    """Handle permission errors during rmtree on Windows (locked .git objects)."""
+    import os, stat
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        os.unlink(path)
+    except OSError:
+        pass  # Best-effort: skip files that truly cannot be removed
+
+
 def remove_path(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink()
         return
     if path.exists():
-        shutil.rmtree(path)
+        shutil.rmtree(path, onexc=_on_rm_error)
 
 
 def reset_directory(path: Path) -> None:
