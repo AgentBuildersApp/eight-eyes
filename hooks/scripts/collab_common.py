@@ -10,3 +10,4 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 # Backward compatibility — all hooks import from here
 from core import *  # noqa: F401,F403
+
