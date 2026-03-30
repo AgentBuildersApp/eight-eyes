@@ -122,7 +122,33 @@ The installer copies hook scripts, agent prompts, and the `/8eyes` command into 
 
 ### Uninstall
 
-To remove eight-eyes from your project, delete the plugin directory and remove the hook entries from your platform's settings file. The installer does not modify source code or Git history.
+```bash
+python3 install.py --uninstall
+```
+
+This removes installed symlinks and cleans up any marketplace registry entries. The installer does not modify source code or Git history.
+
+### Platform Notes
+
+**macOS / Linux**
+
+- Python 3.10+ must be available as `python3`. Most systems have this already.
+- Git must be installed and available in `$PATH`.
+- The installer creates symlinks. No `sudo` required — everything installs to your home directory.
+
+**Windows**
+
+- Python 3.10+ must be available as `python3` or `python`. The installer and all hook scripts work with either.
+- Git for Windows must be installed. The hooks use `git rev-parse` at runtime.
+- The installer creates symlinks where possible, falling back to directory copies if symlink permissions are unavailable. Run your terminal as Administrator for symlink support, or the copy fallback works identically.
+- File locking uses `msvcrt` (Windows native) instead of `fcntl`. This is handled automatically.
+- All file paths in the manifest and ledger use forward slashes regardless of OS.
+
+**CI / Docker**
+
+- The test suite runs on Ubuntu, macOS, and Windows across Python 3.10 through 3.13 via GitHub Actions.
+- No external dependencies — the entire project is stdlib-only Python. No `pip install` step required.
+- For containerized environments, ensure `git` is available in the image.
 
 ---
 
