@@ -1635,7 +1635,7 @@ class CollabHookTests(unittest.TestCase):
         self.assertTrue(plugin_path.exists())
         plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
         self.assertEqual(plugin["name"], "eight-eyes")
-        self.assertEqual(plugin["version"], "4.1.0")
+        self.assertEqual(plugin["version"], "4.2.0")
         self.assertEqual(plugin["agents"], "agents/")
         self.assertEqual(plugin["skills"], ["skills/collab"])
         self.assertEqual(plugin["hooks"], "hooks.json")

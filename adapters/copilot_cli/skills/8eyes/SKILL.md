@@ -1,12 +1,12 @@
 ---
-name: collab
+name: 8eyes
 description: >
-  Failure-aware multi-agent mission coordinator.  Activate when the user
-  invokes `/collab <objective>` or explicitly requests a multi-agent review,
-  implementation, or audit mission.
+  Start a failure-aware multi-agent code review with 8 constrained roles.
+  Activate when the user invokes `/8eyes <objective>` or requests a
+  multi-agent review, implementation, or audit mission.
 ---
 
-> This skill works identically on Claude Code and Copilot CLI.
+> Eight constrained reviewers. Each scoped to a different failure surface.
 
 # collab -- Coordinator Instructions
 

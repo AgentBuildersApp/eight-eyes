@@ -17,3 +17,4 @@ plans/
 .tmp-tests/
 .pytest_cache/
 
+.claude/worktrees/

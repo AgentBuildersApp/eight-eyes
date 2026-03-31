@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parent
 HOME = Path.home()
 
 CLAUDE_TARGET = HOME / ".claude" / "plugins" / "eight-eyes"
-COPILOT_TARGET = HOME / ".config" / "github-copilot" / "plugins" / "eight-eyes"
-CODEX_TARGET = HOME / ".codex" / "plugins" / "eight-eyes"
+COPILOT_TARGET = HOME / ".copilot" / "skills" / "8eyes"
+CODEX_TARGET = HOME / ".codex" / "skills" / "8eyes"
 
 PLATFORM_TARGETS = {
     "claude_code": CLAUDE_TARGET,
@@ -41,6 +41,8 @@ def detect_claude_code() -> bool:
 
 
 def detect_copilot_cli() -> bool:
+    if (HOME / ".copilot").exists():
+        return True
     config_dir = HOME / ".config" / "github-copilot"
     if config_dir.exists():
         return True
@@ -288,37 +290,40 @@ def install_claude_code(target: Path) -> None:
 
 def install_copilot_cli(target: Path) -> None:
     reset_directory(target)
-    mode_agents = link_or_copy(REPO_ROOT / "adapters" / "copilot_cli" / "agents", target / "agents")
+    # SKILL.md is the entry point — Copilot discovers skills from ~/.copilot/skills/{name}/
     mode_skill = link_or_copy(
-        REPO_ROOT / "adapters" / "copilot_cli" / "skills" / "collab" / "SKILL.md",
-        target / "skills" / "collab" / "SKILL.md",
+        REPO_ROOT / "adapters" / "copilot_cli" / "skills" / "8eyes" / "SKILL.md",
+        target / "SKILL.md",
     )
     mode_refs = link_or_copy(
         REPO_ROOT / "skills" / "collab" / "references",
-        target / "skills" / "collab" / "references",
+        target / "references",
     )
+    mode_agents = link_or_copy(REPO_ROOT / "adapters" / "copilot_cli" / "agents", target / "agents")
     mode_hooks = link_or_copy(REPO_ROOT / "hooks", target / "hooks")
     mode_scripts = link_or_copy(REPO_ROOT / "scripts", target / "scripts")
-    adapter_plugin = json.loads((REPO_ROOT / "adapters" / "copilot_cli" / "plugin.json").read_text(encoding="utf-8"))
-    write_json(target / "plugin.json", adapter_plugin)
     write_json(target / "hooks.json", installed_copilot_hooks(target))
     print(
         "[OK] copilot_cli installed: "
-        f"plugin=generated, agents={mode_agents}, skill={mode_skill}, "
+        f"skill={mode_skill}, agents={mode_agents}, "
         f"references={mode_refs}, hooks={mode_hooks}, scripts={mode_scripts}"
     )
 
 
 def install_codex_cli(target: Path) -> None:
     reset_directory(target)
+    # SKILL.md is the entry point — Codex discovers skills from ~/.codex/skills/{name}/
+    mode_skill = link_or_copy(REPO_ROOT / "commands" / "8eyes.md", target / "SKILL.md")
     mode_agents = link_or_copy(REPO_ROOT / "adapters" / "codex_cli" / "agents", target / "agents")
     mode_instructions = link_or_copy(REPO_ROOT / "adapters" / "codex_cli" / "AGENTS.md", target / "AGENTS.md")
+    mode_refs = link_or_copy(REPO_ROOT / "skills" / "collab" / "references", target / "references")
     mode_hooks = link_or_copy(REPO_ROOT / "hooks", target / "hooks")
     mode_scripts = link_or_copy(REPO_ROOT / "scripts", target / "scripts")
     write_json(target / "hooks.json", installed_codex_hooks(target))
     print(
         "[OK] codex_cli installed: "
-        f"agents={mode_agents}, AGENTS.md={mode_instructions}, hooks={mode_hooks}, scripts={mode_scripts}"
+        f"skill={mode_skill}, agents={mode_agents}, AGENTS.md={mode_instructions}, "
+        f"references={mode_refs}, hooks={mode_hooks}, scripts={mode_scripts}"
     )
 
 

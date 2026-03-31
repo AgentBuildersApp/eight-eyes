@@ -773,9 +773,9 @@ def cmd_locate(args):
     locations = [
         ("Claude Code plugin", home / ".claude" / "plugins" / "eight-eyes"),
         ("Claude Code marketplace", home / ".claude" / "plugins" / "marketplaces" / "8eyes-marketplace"),
-        ("Copilot CLI plugin", home / ".config" / "github-copilot" / "plugins" / "eight-eyes"),
+        ("Copilot CLI skill", home / ".copilot" / "skills" / "8eyes"),
         ("Copilot CLI marketplace", home / "AppData" / "Local" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"),
-        ("Codex CLI agents", home / ".codex" / "agents" / "eight-eyes"),
+        ("Codex CLI skill", home / ".codex" / "skills" / "8eyes"),
         ("Working copy", Path(__file__).resolve().parent.parent),
     ]
     print("eight-eyes install locations:")
