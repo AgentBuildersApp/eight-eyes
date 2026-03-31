@@ -2479,7 +2479,7 @@ class CollabHookTests(unittest.TestCase):
             [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--version"],
             capture_output=True, text=True, check=True,
         )
-        self.assertRegex(proc.stdout.strip(), r"^\d+\.\d+\.\d+$")
+        self.assertRegex(proc.stdout.strip(), r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$")
 
     def test_144_version_file_exists(self):
         """VERSION file exists at repo root."""

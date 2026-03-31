@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "implementer": {
+      "name": "implementer",
+      "purpose": ">-",
+      "scope_mode": "write_allowed",
+      "write_paths_key": "allowed_paths",
+      "bash_policy": "denied",
+      "approved_commands_key": null,
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": false,
+      "result_schema": "spec/roles/schemas/implementer.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": false,
+      "default_enabled": true,
+      "phase": "implement",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "full",
+        "codex_cli": "full"
+      }
+    },
+    "test-writer": {
+      "name": "test-writer",
+      "purpose": ">-",
+      "scope_mode": "write_test",
+      "write_paths_key": "test_paths",
+      "bash_policy": "denied",
+      "approved_commands_key": null,
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": false,
+      "result_schema": "spec/roles/schemas/test-writer.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": false,
+      "default_enabled": true,
+      "phase": "test",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "full",
+        "codex_cli": "full"
+      }
+    },
+    "docs": {
+      "name": "docs",
+      "purpose": ">-",
+      "scope_mode": "write_doc",
+      "write_paths_key": "doc_paths",
+      "bash_policy": "denied",
+      "approved_commands_key": null,
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": false,
+      "result_schema": "spec/roles/schemas/docs.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": true,
+      "default_enabled": true,
+      "phase": "docs",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "full",
+        "codex_cli": "full"
+      }
+    },
+    "skeptic": {
+      "name": "skeptic",
+      "purpose": ">-",
+      "scope_mode": "read_only",
+      "write_paths_key": null,
+      "bash_policy": "read_only",
+      "approved_commands_key": null,
+      "blind_from": [
+        "implementer",
+        "test-writer"
+      ],
+      "review_md_visibility": true,
+      "result_schema": "spec/roles/schemas/skeptic.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": true,
+      "default_enabled": true,
+      "phase": "audit",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "full",
+        "codex_cli": "full"
+      }
+    },
+    "security": {
+      "name": "security",
+      "purpose": ">-",
+      "scope_mode": "read_only",
+      "write_paths_key": null,
+      "bash_policy": "read_only_plus_approved",
+      "approved_commands_key": "security_scan_commands",
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": true,
+      "result_schema": "spec/roles/schemas/security.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": true,
+      "default_enabled": true,
+      "phase": "audit",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "degraded",
+        "codex_cli": "degraded"
+      }
+    },
+    "performance": {
+      "name": "performance",
+      "purpose": ">-",
+      "scope_mode": "read_only",
+      "write_paths_key": null,
+      "bash_policy": "read_only_plus_approved",
+      "approved_commands_key": "benchmark_commands",
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": false,
+      "result_schema": "spec/roles/schemas/performance.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": true,
+      "default_enabled": true,
+      "phase": "audit",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "degraded",
+        "codex_cli": "degraded"
+      }
+    },
+    "accessibility": {
+      "name": "accessibility",
+      "purpose": ">-",
+      "scope_mode": "read_only",
+      "write_paths_key": null,
+      "bash_policy": "read_only_plus_approved",
+      "approved_commands_key": "a11y_commands",
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": false,
+      "result_schema": "spec/roles/schemas/accessibility.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": true,
+      "default_enabled": true,
+      "phase": "audit",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "degraded",
+        "codex_cli": "degraded"
+      }
+    },
+    "verifier": {
+      "name": "verifier",
+      "purpose": ">-",
+      "scope_mode": "read_only",
+      "write_paths_key": null,
+      "bash_policy": "read_only_plus_approved",
+      "approved_commands_key": "verification_commands",
+      "blind_from": [
+        "[",
+        "]"
+      ],
+      "review_md_visibility": true,
+      "result_schema": "spec/roles/schemas/verifier.result.json",
+      "result_required_fields": [],
+      "result_status_values": [],
+      "supports_parallel_phase": false,
+      "default_enabled": true,
+      "phase": "verify",
+      "host_support": {
+        "claude_code": "full",
+        "copilot_cli": "degraded",
+        "codex_cli": "experimental"
+      }
+    }
+  },
+  "source_sha256": "56fca7cfebd5ef9624ae50e9ce3a93b0c88ed78780a75dd22729d27605e14072"
+}

@@ -57,7 +57,7 @@
       "platforms": {
         "claude_code": "supported",
         "copilot_cli": "supported",
-        "codex_cli": "not_available"
+        "codex_cli": "degraded"
       }
     },
     "Stop": {
@@ -79,7 +79,7 @@
       "platforms": {
         "claude_code": "supported",
         "copilot_cli": "supported",
-        "codex_cli": "not_available"
+        "codex_cli": "degraded"
       }
     },
     "SubagentStart": {
