@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eight-eyes.dev/schemas/builtin-roles.schema.json",
+  "title": "Eight-Eyes Built-in Role Specification",
+  "description": "JSON Schema validating the builtin_roles.yaml structure for the eight-eyes multi-agent review system.",
+  "type": "object",
+  "required": ["version", "roles"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the role specification."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "source_of_truth": { "type": "string" },
+        "last_synced_from": { "type": "string" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "minProperties": 8,
+      "maxProperties": 8,
+      "propertyNames": {
+        "enum": [
+          "implementer",
+          "test-writer",
+          "skeptic",
+          "security",
+          "performance",
+          "accessibility",
+          "docs",
+          "verifier"
+        ]
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": { "$ref": "#/$defs/role" }
+      }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "object",
+      "required": [
+        "name",
+        "purpose",
+        "scope_mode",
+        "write_paths_key",
+        "bash_policy",
+        "approved_commands_key",
+        "blind_from",
+        "review_md_visibility",
+        "result_schema",
+        "result_fields",
+        "supports_parallel_phase",
+        "default_enabled",
+        "phase",
+        "host_support"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable display name for the role."
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 200,
+          "description": "One-line description of what the role does."
+        },
+        "scope_mode": {
+          "type": "string",
+          "enum": ["read_only", "write_allowed", "write_test", "write_doc", "verify_only"],
+          "description": "File-system permission model for the role."
+        },
+        "write_paths_key": {
+          "type": ["string", "null"],
+          "enum": ["allowed_paths", "test_paths", "doc_paths", null],
+          "description": "Which manifest key governs the role's writable paths. Null for read-only roles."
+        },
+        "bash_policy": {
+          "type": "string",
+          "enum": ["denied", "read_only", "read_only_plus_approved"],
+          "description": "How the PreToolUse hook handles Bash calls from this role."
+        },
+        "approved_commands_key": {
+          "type": ["string", "null"],
+          "enum": [
+            "verification_commands",
+            "security_scan_commands",
+            "benchmark_commands",
+            "a11y_commands",
+            null
+          ],
+          "description": "Which manifest key provides the role's extra approved Bash commands. Null when no extra commands are allowed."
+        },
+        "blind_from": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "implementer",
+              "test-writer",
+              "skeptic",
+              "security",
+              "performance",
+              "accessibility",
+              "docs",
+              "verifier"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "List of roles whose results are intentionally hidden from this role's context to prevent anchoring bias."
+        },
+        "review_md_visibility": {
+          "type": "boolean",
+          "description": "Whether REVIEW.md content is injected into this role's SubagentStart context."
+        },
+        "result_schema": {
+          "type": "string",
+          "description": "Path (relative to repo root) to the JSON schema file validating this role's result block."
+        },
+        "result_fields": {
+          "type": "object",
+          "required": ["required", "status_values"],
+          "additionalProperties": false,
+          "properties": {
+            "required": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "uniqueItems": true,
+              "description": "Fields that must be present in the role's JSON result block."
+            },
+            "status_values": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "uniqueItems": true,
+              "description": "Valid values for the role's status or recommendation field."
+            }
+          }
+        },
+        "supports_parallel_phase": {
+          "type": "boolean",
+          "description": "Whether this role can run concurrently with other roles in the same phase."
+        },
+        "default_enabled": {
+          "type": "boolean",
+          "description": "Whether the role is included by default in every mission."
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["implement", "test", "audit", "verify", "docs"],
+          "description": "The mission phase in which this role is dispatched."
+        },
+        "host_support": {
+          "type": "object",
+          "required": ["claude_code", "copilot_cli", "codex_cli"],
+          "additionalProperties": false,
+          "properties": {
+            "claude_code": {
+              "type": "string",
+              "enum": ["full", "degraded", "experimental", "unsupported"],
+              "description": "Support level in the Claude Code host."
+            },
+            "copilot_cli": {
+              "type": "string",
+              "enum": ["full", "degraded", "experimental", "unsupported"],
+              "description": "Support level in the GitHub Copilot CLI host."
+            },
+            "codex_cli": {
+              "type": "string",
+              "enum": ["full", "degraded", "experimental", "unsupported"],
+              "description": "Support level in the OpenAI Codex CLI host."
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 [project]
 name = "eight-eyes"
-version = "4.2.0"
+version = "5.0.0a1"
 description = "Hook-enforced multi-agent code review for Claude Code, Copilot CLI, and Codex CLI"
 readme = "README.md"
 license = "MIT"

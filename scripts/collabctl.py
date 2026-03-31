@@ -513,34 +513,84 @@ def cmd_status(args):
         return 0
 
     manifest = ctx.manifest
+    role_assignments = manifest.get("role_assignments", {})
+    planned = manifest.get("planned_roles", list(ROLE_STATUS_ORDER))
+    skipped = manifest.get("skipped_roles", [])
+
+    # Categorize roles
+    completed_roles: list[str] = []
+    pending_roles: list[str] = []
+    role_details: list[dict] = []
+    for role in _role_names_for_status(manifest):
+        result = load_role_result(ctx, role)
+        assignment = role_assignments.get(role, {})
+        status_str = _result_status(result, role=role, manifest=manifest)
+        outcome = _result_outcome(result)
+        if status_str in ("complete", "failed"):
+            completed_roles.append(f"{role} ({outcome})" if outcome else role)
+        elif role not in skipped:
+            pending_roles.append(role)
+        role_details.append({
+            "role": role,
+            "status": status_str,
+            "recommendation": outcome or None,
+            "model": assignment.get("model") if isinstance(assignment, dict) else None,
+            "duration_seconds": assignment.get("duration_seconds") if isinstance(assignment, dict) else None,
+            "finding_count": assignment.get("finding_count") if isinstance(assignment, dict) else None,
+        })
+
+    # JSON mode
+    if getattr(args, "json_output", False):
+        print(json.dumps({
+            "mission_id": ctx.mission_id,
+            "objective": manifest.get("objective", ""),
+            "phase": manifest.get("phase", "unknown"),
+            "elapsed": _format_elapsed(manifest.get("created_at")),
+            "fail_closed": manifest.get("fail_closed", False),
+            "loop_count": manifest.get("loop_count", 0),
+            "max_loops": manifest.get("max_loops", 3),
+            "planned_roles": planned,
+            "completed": [r for r in role_details if r["status"] in ("complete", "failed")],
+            "pending": [r["role"] for r in role_details if r["status"] == "pending"],
+            "skipped": skipped,
+            "roles": role_details,
+        }, indent=2, ensure_ascii=False))
+        return 0
+
+    # Text mode with enhanced output
     lines = [
         f"Mission ID: {ctx.mission_id}",
         f"Objective: {manifest.get('objective', '')}",
         f"Current phase: {manifest.get('phase', 'unknown')}",
         f"Elapsed: {_format_elapsed(manifest.get('created_at'))}",
+        f"Fail-closed: {manifest.get('fail_closed', False)}",
+        f"Loops: {manifest.get('loop_count', 0)}/{manifest.get('max_loops', 3)}",
+        f"Planned roles: {', '.join(planned)}",
+        f"Completed: {', '.join(completed_roles) if completed_roles else '(none)'}",
+        f"Pending: {', '.join(pending_roles) if pending_roles else '(none)'}",
+        f"Skipped: {', '.join(skipped) if skipped else '(none)'}",
         "Roles:",
     ]
 
-    role_assignments = manifest.get("role_assignments", {})
-    for role in _role_names_for_status(manifest):
+    for detail in role_details:
+        role = detail["role"]
         result = load_role_result(ctx, role)
         assignment = role_assignments.get(role, {})
-        status_str = _result_status(result, role=role, manifest=manifest)
         extras: list[str] = []
-        model = assignment.get("model")
+        model = detail.get("model")
         if model:
             extras.append(f"model={model}")
-        duration = assignment.get("duration_seconds")
+        duration = detail.get("duration_seconds")
         if duration is not None:
             mins, secs = divmod(int(duration), 60)
             extras.append(f"duration={mins}m{secs:02d}s")
         suffix = f" ({', '.join(extras)})" if extras else ""
-        lines.append(f"- {role}: {status_str}{suffix}")
-        outcome = _result_outcome(result)
+        lines.append(f"- {role}: {detail['status']}{suffix}")
+        outcome = detail.get("recommendation")
         if outcome:
             lines.append(f"  recommendation: {outcome}")
-        for detail in _role_summary_lines(result):
-            lines.append(f"  {detail}")
+        for summary_line in _role_summary_lines(result):
+            lines.append(f"  {summary_line}")
 
     crash_warnings = manifest.get("crash_warnings", [])
     if crash_warnings:
@@ -554,6 +604,98 @@ def cmd_status(args):
 
     print("\n".join(lines))
     return 0
+
+
+def cmd_capabilities(args):
+    """Display the enforcement contract: hook semantics and platform coverage."""
+    # Try loading the compiled enforcement contract
+    contract_path = _PLUGIN_ROOT / "spec" / "enforcement_compiled.json"
+    roles_path = _PLUGIN_ROOT / "spec" / "roles" / "roles_compiled.json"
+
+    contract = None
+    if contract_path.exists():
+        contract = load_json(contract_path)
+    else:
+        # Fall back to raw YAML-like JSON
+        raw_path = _PLUGIN_ROOT / "spec" / "enforcement.yaml"
+        if raw_path.exists():
+            contract = _parse_simple_yaml(raw_path)
+
+    if not contract:
+        print("Enforcement contract not found. Run generate_role_assets.py first.")
+        return 1
+
+    roles_data = None
+    if roles_path.exists():
+        roles_data = load_json(roles_path)
+
+    if getattr(args, "json_output", False):
+        output = {"enforcement": contract}
+        if roles_data:
+            output["roles"] = roles_data
+        if getattr(args, "role_filter", None):
+            role_name = args.role_filter
+            if roles_data and isinstance(roles_data.get("roles"), dict):
+                filtered = roles_data["roles"].get(role_name)
+                output["roles"] = {"roles": {role_name: filtered}} if filtered else {"roles": {}}
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+        return 0
+
+    # Text output
+    hooks = contract.get("hooks", {})
+    print("eight-eyes Enforcement Contract")
+    print("=" * 40)
+    print()
+    print("Hook Enforcement Model:")
+    print(f"{'Hook':<18} {'Gate Class':<14} {'Failure Mode':<16} {'Claude':<9} {'Copilot':<9} {'Codex'}")
+    print("-" * 85)
+    for name, hook in hooks.items():
+        platforms = hook.get("platforms", {})
+        print(
+            f"{name:<18} {hook.get('gate_class', '?'):<14} "
+            f"{hook.get('failure_mode', '?'):<16} "
+            f"{platforms.get('claude_code', '?'):<9} "
+            f"{platforms.get('copilot_cli', '?'):<9} "
+            f"{platforms.get('codex_cli', '?')}"
+        )
+
+    print()
+    print("Gate Class Semantics:")
+    semantics = contract.get("gate_class_semantics", {})
+    for name, sem in semantics.items():
+        print(f"  {name}: {sem.get('behavior', '?')} (blocks_mission={sem.get('blocks_mission', '?')})")
+
+    if roles_data and isinstance(roles_data.get("roles"), dict):
+        role_filter = getattr(args, "role_filter", None)
+        roles_dict = roles_data["roles"]
+        if role_filter:
+            roles_dict = {role_filter: roles_dict.get(role_filter)} if role_filter in roles_dict else {}
+
+        print()
+        print("Role Capabilities:")
+        print(f"{'Role':<17} {'Scope':<14} {'Bash':<22} {'Phase':<10} {'Parallel'}")
+        print("-" * 80)
+        for rname, rspec in roles_dict.items():
+            if not rspec:
+                continue
+            print(
+                f"{rname:<17} {rspec.get('scope_mode', '?'):<14} "
+                f"{rspec.get('bash_policy', '?'):<22} "
+                f"{rspec.get('phase', '?'):<10} "
+                f"{rspec.get('supports_parallel_phase', '?')}"
+            )
+
+    return 0
+
+
+def _parse_simple_yaml(path: Path) -> dict | None:
+    """Parse a minimal YAML subset (flat keys, nested dicts) without PyYAML."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        # For now, return None — the compiled JSON is the primary path
+        return None
+    except Exception:
+        return None
 
 
 def cmd_phase(args):
@@ -1116,6 +1258,7 @@ def build_parser():
 
     # status
     status = sub.add_parser("status", help="Display active mission progress")
+    status.add_argument("--json", dest="json_output", action="store_true", help="Machine-readable JSON output")
     status.set_defaults(func=cmd_status)
 
     # phase
@@ -1160,6 +1303,12 @@ def build_parser():
     verify = sub.add_parser("verify", help="Verify plugin installation")
     verify.add_argument("--install-only", action="store_true", help="Check files only, skip git requirement")
     verify.set_defaults(func=cmd_verify)
+
+    # capabilities
+    capabilities = sub.add_parser("capabilities", help="Display enforcement contract and role capabilities")
+    capabilities.add_argument("--json", dest="json_output", action="store_true", help="Machine-readable JSON output")
+    capabilities.add_argument("--role", dest="role_filter", help="Show capabilities for a specific role")
+    capabilities.set_defaults(func=cmd_capabilities)
 
     # locate
     locate = sub.add_parser("locate", help="Print all known install locations")

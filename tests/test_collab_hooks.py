@@ -2516,6 +2516,172 @@ class CollabHookTests(unittest.TestCase):
         self.assertIn("subagentStart", content)
 
 
+# ── WS-4: Adapter Parity Tests (v5.0) ──
+
+
+class TestAdapterParity(unittest.TestCase):
+    """Verify installer-generated manifests match committed adapter files."""
+
+    def setUp(self) -> None:
+        TEST_TMP_ROOT.mkdir(exist_ok=True)
+        self.tempdir = TEST_TMP_ROOT / f"parity-{uuid.uuid4().hex}"
+        self.tempdir.mkdir()
+        # Simulate an install target directory
+        self.target = self.tempdir / "target"
+        self.target.mkdir()
+        # Import installer module dynamically
+        spec = importlib.util.spec_from_file_location(
+            "install", PLUGIN_ROOT / "install.py"
+        )
+        assert spec is not None and spec.loader is not None
+        self.install_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.install_mod)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+
+    # ── Copilot parity ──
+
+    def test_copilot_hooks_match_committed(self):
+        """Installer output for Copilot must match adapters/copilot_cli/hooks.json."""
+        # Load committed manifest
+        committed_path = PLUGIN_ROOT / "adapters" / "copilot_cli" / "hooks.json"
+        committed = json.loads(committed_path.read_text(encoding="utf-8"))
+
+        # Generate installer manifest for a fake target
+        generated = self.install_mod.installed_copilot_hooks(self.target)
+
+        # Structural equivalence: same version
+        self.assertEqual(generated.get("version"), committed.get("version"),
+                         "Copilot hooks version mismatch between installer and committed manifest")
+
+        # Same hook event names
+        committed_events = set(committed["hooks"].keys())
+        generated_events = set(generated["hooks"].keys())
+        self.assertEqual(generated_events, committed_events,
+                         f"Copilot hook event mismatch: "
+                         f"only in committed={committed_events - generated_events}, "
+                         f"only in generated={generated_events - committed_events}")
+
+        # Each hook has the same number of entries and same type
+        for event in committed_events:
+            committed_entries = committed["hooks"][event]
+            generated_entries = generated["hooks"][event]
+            self.assertEqual(len(generated_entries), len(committed_entries),
+                             f"Copilot hook '{event}': entry count mismatch")
+            for i, (c_entry, g_entry) in enumerate(zip(committed_entries, generated_entries)):
+                self.assertEqual(g_entry["type"], c_entry["type"],
+                                 f"Copilot hook '{event}' entry {i}: type mismatch")
+                # Both must have bash and powershell commands
+                self.assertIn("bash", g_entry, f"Copilot hook '{event}' entry {i}: missing bash")
+                self.assertIn("powershell", g_entry, f"Copilot hook '{event}' entry {i}: missing powershell")
+                self.assertIn("bash", c_entry, f"Committed hook '{event}' entry {i}: missing bash")
+                self.assertIn("powershell", c_entry, f"Committed hook '{event}' entry {i}: missing powershell")
+                # Both bash commands must reference the same script filename
+                c_script = c_entry["bash"].rsplit("/", 1)[-1].rstrip('"')
+                g_script = g_entry["bash"].rsplit("/", 1)[-1].rstrip('"')
+                self.assertEqual(g_script, c_script,
+                                 f"Copilot hook '{event}' entry {i}: script name mismatch "
+                                 f"(committed={c_script}, generated={g_script})")
+
+    # ── Codex parity ──
+
+    def test_codex_hooks_match_committed(self):
+        """Installer output for Codex must match adapters/codex_cli/hooks.json."""
+        # Load committed manifest
+        committed_path = PLUGIN_ROOT / "adapters" / "codex_cli" / "hooks.json"
+        committed = json.loads(committed_path.read_text(encoding="utf-8"))
+
+        # Generate installer manifest for a fake target
+        generated = self.install_mod.installed_codex_hooks(self.target)
+
+        # Same number of hooks
+        committed_hooks = committed["hooks"]
+        generated_hooks = generated["hooks"]
+        self.assertEqual(len(generated_hooks), len(committed_hooks),
+                         f"Codex hook count mismatch: committed={len(committed_hooks)}, "
+                         f"generated={len(generated_hooks)}")
+
+        # Same events in same order
+        committed_events = [h["event"] for h in committed_hooks]
+        generated_events = [h["event"] for h in generated_hooks]
+        self.assertEqual(generated_events, committed_events,
+                         f"Codex hook events mismatch: committed={committed_events}, "
+                         f"generated={generated_events}")
+
+        # Each hook references the same script filename and has timeout_ms
+        for c_hook, g_hook in zip(committed_hooks, generated_hooks):
+            event = c_hook["event"]
+            # Both must have command arrays
+            self.assertIn("command", g_hook, f"Codex hook '{event}': missing command in generated")
+            self.assertIn("command", c_hook, f"Codex hook '{event}': missing command in committed")
+            # Script filename must match (last element of command array)
+            c_script = Path(c_hook["command"][-1]).name
+            g_script = Path(g_hook["command"][-1]).name
+            self.assertEqual(g_script, c_script,
+                             f"Codex hook '{event}': script name mismatch "
+                             f"(committed={c_script}, generated={g_script})")
+            # Both must specify timeout_ms
+            self.assertIn("timeout_ms", g_hook, f"Codex hook '{event}': missing timeout_ms in generated")
+            self.assertIn("timeout_ms", c_hook, f"Codex hook '{event}': missing timeout_ms in committed")
+            self.assertEqual(g_hook["timeout_ms"], c_hook["timeout_ms"],
+                             f"Codex hook '{event}': timeout_ms mismatch")
+
+    # ── Enforcement contract coverage ──
+
+    def test_enforcement_contract_covers_all_hooks(self):
+        """Every hook in enforcement_compiled.json must have a matching hook script."""
+        enforcement_path = PLUGIN_ROOT / "spec" / "enforcement_compiled.json"
+        enforcement = json.loads(enforcement_path.read_text(encoding="utf-8"))
+
+        for hook_name, hook_spec in enforcement["hooks"].items():
+            script_rel = hook_spec["script"]
+            script_path = PLUGIN_ROOT / script_rel
+            self.assertTrue(
+                script_path.exists(),
+                f"enforcement_compiled.json references '{script_rel}' for hook "
+                f"'{hook_name}' but file does not exist at {script_path}"
+            )
+
+    # ── collabctl capabilities --json stability ──
+
+    def test_capabilities_json_is_stable(self):
+        """collabctl capabilities --json must produce valid JSON with all hooks."""
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "capabilities", "--json"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(proc.returncode, 0,
+                         f"collabctl capabilities --json failed: {proc.stderr}")
+
+        # Must parse as valid JSON
+        data = json.loads(proc.stdout)
+
+        # Must contain enforcement section with hooks
+        self.assertIn("enforcement", data, "capabilities JSON missing 'enforcement' key")
+        hooks = data["enforcement"]["hooks"]
+
+        # All 7 hooks must be present
+        expected_hooks = {
+            "PreToolUse", "SubagentStop", "PostToolUse", "Stop",
+            "SessionStart", "SubagentStart", "PreCompact",
+        }
+        actual_hooks = set(hooks.keys())
+        self.assertEqual(actual_hooks, expected_hooks,
+                         f"Hook set mismatch: missing={expected_hooks - actual_hooks}, "
+                         f"extra={actual_hooks - expected_hooks}")
+
+        # PreToolUse and SubagentStop must be hard_gate
+        self.assertEqual(hooks["PreToolUse"]["gate_class"], "hard_gate",
+                         "PreToolUse must be hard_gate")
+        self.assertEqual(hooks["SubagentStop"]["gate_class"], "hard_gate",
+                         "SubagentStop must be hard_gate")
+
+        # Stop must be lifecycle (warn failure mode)
+        self.assertEqual(hooks["Stop"]["failure_mode"], "warn",
+                         "Stop must have failure_mode=warn")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

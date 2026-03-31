@@ -1,0 +1,256 @@
+# enforcement.yaml — Canonical hook semantics for eight-eyes v5.0
+#
+# SINGLE SOURCE OF TRUTH for hook failure modes, gate classes, and
+# platform support. Seeded from actual runtime behavior in:
+#   hooks/scripts/collab_*.py
+#   hooks/scripts/core/circuit_breaker.py
+#   adapters/codex_cli/hooks.json
+#   adapters/copilot_cli/hooks.json
+#   hooks/hooks.json (Claude Code native registration)
+#
+# Consumed by:
+#   - hooks/scripts/core/enforcement_contract.py (runtime loader)
+#   - scripts/collabctl.py capabilities (CLI display)
+#   - tests/test_collab_hooks.py (contract assertions)
+#   - docs/platform-capabilities.md (generated)
+#
+# Any conflict between docs and this file: this file wins.
+
+schema_version: 1
+
+# ---------------------------------------------------------------------------
+# Gate class semantics
+# ---------------------------------------------------------------------------
+gate_class_semantics:
+
+  hard_gate:
+    behavior: abort_on_failure
+    blocks_mission: true
+    requires_response: true
+    fail_closed: true
+    circuit_breaker: true
+    description: >-
+      Enforcement boundary. Mission aborts on failure. PreToolUse denies
+      unauthorized mutations via pretool_deny() JSON. SubagentStop blocks
+      invalid results via stop_block() JSON and escalates to awaiting_user.
+      Both use HookCircuitBreaker with retry (2 attempts, 100ms/500ms backoff).
+      On circuit open: deny blocks the action; block escalates to user.
+    failure_modes:
+      - deny   # PreToolUse: emits pretool_deny(), action is blocked
+      - block  # SubagentStop: emits stop_block(), escalates to awaiting_user
+
+  recovery:
+    behavior: log_and_compensate
+    blocks_mission: false
+    requires_response: false
+    fail_closed: false
+    circuit_breaker: false
+    description: >-
+      Audit trail and compensating action. PostToolUse logs file mutations
+      and bash executions to the NDJSON ledger. For read-only roles whose
+      writes escaped PreToolUse, performs git checkout revert (tracked files)
+      or unlink (new files) as best-effort compensation. Always returns 0.
+      Uses manual _fail_open() with double-defense (ledger write failure
+      does not propagate).
+    failure_modes:
+      - fail_open  # PostToolUse: catches all exceptions, returns 0
+
+  lifecycle:
+    behavior: best_effort
+    blocks_mission: false
+    requires_response: false
+    fail_closed: false
+    circuit_breaker: partial  # Stop uses HookCircuitBreaker; SessionStart/SubagentStart do not
+    description: >-
+      Best-effort context injection or exit coordination. SessionStart
+      loads the active mission manifest and injects a compact summary.
+      SubagentStart builds role-specific context with progressive disclosure.
+      Stop blocks session exit while phases have unfinished work but never
+      traps the operator. Hook errors never block the session or tool call.
+      Stop uses HookCircuitBreaker(failure_mode="warn") which persists
+      crash_warnings to manifest and allows exit. SessionStart and
+      SubagentStart use manual _fail_open().
+    failure_modes:
+      - fail_open  # SessionStart, SubagentStart: _fail_open() returns 0
+      - warn       # Stop: circuit breaker persists crash_warnings, allows exit
+
+  observability:
+    behavior: async_only
+    blocks_mission: false
+    requires_response: false
+    fail_closed: false
+    circuit_breaker: false
+    description: >-
+      Async state preservation for context window compaction events.
+      PreCompact snapshots manifest state and last 20 lines of progress.md
+      to timestamped JSON in mission_dir/snapshots/. Registered with
+      async: true in hooks.json. Uses manual _fail_open() with double-defense.
+      Failures never block any operation.
+    failure_modes:
+      - async_fail_open  # PreCompact: _fail_open() returns 0, runs async
+
+# ---------------------------------------------------------------------------
+# Hook definitions — ordered by enforcement priority
+# ---------------------------------------------------------------------------
+hooks:
+
+  PreToolUse:
+    script: hooks/scripts/collab_pre_tool.py
+    failure_mode: deny
+    gate_class: hard_gate
+    description: >-
+      Primary mutation gate. Enforces role-scoped tool permissions before
+      every Write, Edit, MultiEdit, and Bash tool call. Write roles
+      (implementer, test-writer, docs) are path-restricted to allowed_paths,
+      test_paths, or doc_paths respectively; Bash is hard-blocked for all
+      write roles. Read-only roles (skeptic, security, performance,
+      accessibility, verifier) are denied all file mutation tools; Bash is
+      restricted to READ_ONLY_BASH_PATTERNS plus role-specific approved
+      commands. Custom roles resolve scope via custom_role_scope_type().
+      Unrecognized collab-* agent types are denied (fail-closed). TDD mode
+      enforces test-before-implement ordering. Uses HookCircuitBreaker
+      with failure_mode="deny". On circuit open, calls _on_deny() which
+      emits pretool_deny() JSON blocking the action.
+    matcher: "Write|Edit|MultiEdit|Bash"
+    circuit_breaker:
+      enabled: true
+      failure_mode: deny
+      max_retries: 2
+      retry_delays_ms: [100, 500]
+      on_open: deny_action
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: degraded
+
+  SubagentStop:
+    script: hooks/scripts/collab_subagent_stop.py
+    failure_mode: block
+    gate_class: hard_gate
+    description: >-
+      Result validation gate. Extracts structured result block from
+      last_assistant_message using RESULT_BEGIN/RESULT_END delimiters.
+      Validates per-role schema via validate_role_result(). Tracks
+      failure counts per role; after 3 consecutive validation failures
+      sets awaiting_user=true with reason. On success, persists role
+      completion timing (duration_seconds), finding_count, outcome, and
+      model to manifest role_assignments under file lock. Appends
+      role_completed ledger entry. Uses HookCircuitBreaker with
+      failure_mode="block". On circuit open, escalates to user via
+      awaiting_user and emits stop_block() JSON.
+    matcher: "collab-"
+    circuit_breaker:
+      enabled: true
+      failure_mode: block
+      max_retries: 2
+      retry_delays_ms: [100, 500]
+      on_open: escalate_to_user
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: not_available
+
+  PostToolUse:
+    script: hooks/scripts/collab_post_tool.py
+    failure_mode: fail_open
+    gate_class: recovery
+    description: >-
+      Audit trail and compensating revert. Records Write/Edit/MultiEdit
+      file mutations and Bash executions to the NDJSON mission ledger with
+      mutation kind, paths, success status, and exit codes. For read-only
+      roles (built-in and custom) whose writes escaped PreToolUse, performs
+      git checkout revert for tracked files or unlink for new files as
+      best-effort compensation, then appends scope_violation_reverted
+      ledger entry. Always returns 0. Uses manual _fail_open() with
+      double-defense (ledger write failure does not propagate).
+    matcher: "Write|Edit|MultiEdit|Bash"
+    circuit_breaker:
+      enabled: false
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: not_available
+
+  Stop:
+    script: hooks/scripts/collab_stop.py
+    failure_mode: warn
+    gate_class: lifecycle
+    description: >-
+      Exit coordination. Blocks session exit while mission phases have
+      unfinished work by checking role results per phase (plan, implement,
+      test, audit, review, security, performance, accessibility, verify,
+      docs). Respects awaiting_user flag (allows exit). Respects mission
+      timeout via timeout_hours (0 or negative disables). Emits stop_block()
+      JSON listing pending items when exit should be blocked. Uses
+      HookCircuitBreaker with failure_mode="warn". On circuit open,
+      persists crash_warnings array to manifest and allows exit — never
+      traps the operator (NIST 800-53 SI-17 principle).
+    matcher: null
+    circuit_breaker:
+      enabled: true
+      failure_mode: warn
+      max_retries: 2
+      retry_delays_ms: [100, 500]
+      on_open: warn_and_allow
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: supported
+
+  SessionStart:
+    script: hooks/scripts/collab_session_start.py
+    failure_mode: fail_open
+    gate_class: lifecycle
+    description: >-
+      Context injection on session start/resume. Detects active mission
+      via git rev-parse --git-common-dir / claude-collab state directory.
+      Loads active manifest and injects compact summary via
+      format_manifest_slim() into hook_context("SessionStart", ...).
+      Adds age warning for missions older than 12 hours. Uses manual
+      _fail_open() with double-defense; never blocks session startup.
+    matcher: "startup|resume|clear|compact"
+    circuit_breaker:
+      enabled: false
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: not_available
+
+  SubagentStart:
+    script: hooks/scripts/collab_subagent_start.py
+    failure_mode: fail_open
+    gate_class: lifecycle
+    description: >-
+      Role context injection. Builds mission-specific context via
+      build_subagent_context() with configurable detail levels per role
+      (DEFAULT_DETAIL_LEVELS). Injects REVIEW.md content (up to 2000 chars)
+      for reviewer roles (skeptic, security, verifier). Records role
+      dispatch timing and model assignment to manifest role_assignments
+      under file lock. Appends role_dispatched ledger entry. Uses manual
+      _fail_open() with double-defense; never blocks subagent startup.
+    matcher: "collab-"
+    circuit_breaker:
+      enabled: false
+    platforms:
+      claude_code: supported
+      copilot_cli: supported
+      codex_cli: not_available
+
+  PreCompact:
+    script: hooks/scripts/collab_pre_compact.py
+    failure_mode: async_fail_open
+    gate_class: observability
+    description: >-
+      State snapshot before context window compaction. Captures current
+      manifest state and last 20 lines of progress.md to timestamped JSON
+      file in mission_dir/snapshots/. Registered with async: true in
+      hooks.json so it runs asynchronously. Uses manual _fail_open() with
+      double-defense; never blocks compaction.
+    matcher: null
+    async: true
+    circuit_breaker:
+      enabled: false
+    platforms:
+      claude_code: supported
+      copilot_cli: not_available
+      codex_cli: not_available

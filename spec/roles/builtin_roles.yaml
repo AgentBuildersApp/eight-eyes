@@ -1,0 +1,280 @@
+# Eight-Eyes Built-in Role Specification
+#
+# Canonical definition of all 8 built-in review roles.
+# Seeded from runtime behavior in hooks/scripts/core/roles.py and
+# hooks/scripts/collab_pre_tool.py.
+#
+# Validated by: spec/roles/roles.schema.json
+# Runtime source of truth: hooks/scripts/core/roles.py
+#
+# Any change here MUST be reflected in roles.py and collab_pre_tool.py
+# (or vice versa). The spec and the runtime must stay in sync.
+
+version: "1.0.0"
+
+metadata:
+  description: >-
+    Defines scope, permissions, isolation, result schemas, and host support
+    for all 8 built-in eight-eyes review roles.
+  source_of_truth: hooks/scripts/core/roles.py
+  last_synced_from: hooks/scripts/core/roles.py@2026-03-31
+
+roles:
+  # ==========================================================================
+  # WRITE ROLES — can create/modify files within scoped paths, no Bash
+  # ==========================================================================
+
+  implementer:
+    name: Implementer
+    purpose: >-
+      Writes production code within allowed_paths to satisfy the mission
+      objective and acceptance criteria.
+    scope_mode: write_allowed
+    write_paths_key: allowed_paths
+    bash_policy: denied
+    approved_commands_key: null
+    blind_from: []
+    review_md_visibility: false
+    result_schema: spec/roles/schemas/implementer.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - status
+        - changed_paths
+        - artifacts
+        - tests_run
+      status_values:
+        - complete
+        - blocked
+    supports_parallel_phase: false
+    default_enabled: true
+    phase: implement
+    host_support:
+      claude_code: full
+      copilot_cli: full
+      codex_cli: full
+
+  test-writer:
+    name: Test Writer
+    purpose: >-
+      Creates and modifies test files within test_paths to cover the
+      implementation with unit, integration, and edge-case tests.
+    scope_mode: write_test
+    write_paths_key: test_paths
+    bash_policy: denied
+    approved_commands_key: null
+    blind_from: []
+    review_md_visibility: false
+    result_schema: spec/roles/schemas/test-writer.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - status
+        - test_files_created
+        - coverage_targets
+        - test_count
+        - edge_cases_covered
+      status_values:
+        - complete
+        - blocked
+    supports_parallel_phase: false
+    default_enabled: true
+    phase: test
+    host_support:
+      claude_code: full
+      copilot_cli: full
+      codex_cli: full
+
+  docs:
+    name: Documentation Writer
+    purpose: >-
+      Creates and updates documentation files within doc_paths to keep
+      READMEs, API docs, and changelogs in sync with code changes.
+    scope_mode: write_doc
+    write_paths_key: doc_paths
+    bash_policy: denied
+    approved_commands_key: null
+    blind_from: []
+    review_md_visibility: false
+    result_schema: spec/roles/schemas/docs.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - status
+        - docs_updated
+        - docs_created
+      status_values:
+        - complete
+        - blocked
+    supports_parallel_phase: true
+    default_enabled: true
+    phase: docs
+    host_support:
+      claude_code: full
+      copilot_cli: full
+      codex_cli: full
+
+  # ==========================================================================
+  # READ-ONLY ROLES — cannot modify files, Bash restricted to read + approved
+  # ==========================================================================
+
+  skeptic:
+    name: Skeptic
+    purpose: >-
+      Performs blind adversarial code review without seeing implementer or
+      test-writer output, to catch hidden coupling and anchoring bias.
+    scope_mode: read_only
+    write_paths_key: null
+    bash_policy: read_only
+    approved_commands_key: null
+    blind_from:
+      - implementer
+      - test-writer
+    review_md_visibility: true
+    result_schema: spec/roles/schemas/skeptic.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - recommendation
+        - findings
+      status_values:
+        - approve
+        - needs_changes
+        - abort
+    supports_parallel_phase: true
+    default_enabled: true
+    phase: audit
+    host_support:
+      claude_code: full
+      copilot_cli: full
+      codex_cli: full
+
+  security:
+    name: Security Reviewer
+    purpose: >-
+      Audits code for auth bypass, injection, secrets exposure, and other
+      security vulnerabilities using read-only inspection and approved
+      scan commands.
+    scope_mode: read_only
+    write_paths_key: null
+    bash_policy: read_only_plus_approved
+    approved_commands_key: security_scan_commands
+    blind_from: []
+    review_md_visibility: true
+    result_schema: spec/roles/schemas/security.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - recommendation
+        - findings
+        - scan_commands_run
+      status_values:
+        - approve
+        - needs_changes
+        - abort
+    supports_parallel_phase: true
+    default_enabled: true
+    phase: audit
+    host_support:
+      claude_code: full
+      copilot_cli: degraded
+      codex_cli: degraded
+
+  performance:
+    name: Performance Reviewer
+    purpose: >-
+      Identifies algorithmic complexity issues, N+1 queries, memory leaks,
+      and other performance concerns using read-only inspection and
+      approved benchmark commands.
+    scope_mode: read_only
+    write_paths_key: null
+    bash_policy: read_only_plus_approved
+    approved_commands_key: benchmark_commands
+    blind_from: []
+    review_md_visibility: false
+    result_schema: spec/roles/schemas/performance.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - recommendation
+        - findings
+        - benchmarks_run
+      status_values:
+        - approve
+        - needs_changes
+        - abort
+    supports_parallel_phase: true
+    default_enabled: true
+    phase: audit
+    host_support:
+      claude_code: full
+      copilot_cli: degraded
+      codex_cli: degraded
+
+  accessibility:
+    name: Accessibility Reviewer
+    purpose: >-
+      Audits UI code for WCAG compliance, missing ARIA attributes, keyboard
+      navigation gaps, and contrast failures using read-only inspection
+      and approved a11y commands.
+    scope_mode: read_only
+    write_paths_key: null
+    bash_policy: read_only_plus_approved
+    approved_commands_key: a11y_commands
+    blind_from: []
+    review_md_visibility: false
+    result_schema: spec/roles/schemas/accessibility.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - recommendation
+        - findings
+        - a11y_commands_run
+      status_values:
+        - approve
+        - needs_changes
+        - abort
+    supports_parallel_phase: true
+    default_enabled: true
+    phase: audit
+    host_support:
+      claude_code: full
+      copilot_cli: degraded
+      codex_cli: degraded
+
+  verifier:
+    name: Verifier
+    purpose: >-
+      Validates that every acceptance criterion is met by running approved
+      verification commands and reporting pass/fail evidence per criterion.
+    scope_mode: read_only
+    write_paths_key: null
+    bash_policy: read_only_plus_approved
+    approved_commands_key: verification_commands
+    blind_from: []
+    review_md_visibility: true
+    result_schema: spec/roles/schemas/verifier.result.json
+    result_fields:
+      required:
+        - role
+        - summary
+        - recommendation
+        - criteria_results
+      status_values:
+        - pass
+        - fail
+        - needs_changes
+    supports_parallel_phase: false
+    default_enabled: true
+    phase: verify
+    host_support:
+      claude_code: full
+      copilot_cli: degraded
+      codex_cli: experimental

@@ -45,7 +45,17 @@ def _main() -> int:
         return 0
 
     role = role_from_agent_type(payload.get("agent_type"))
-    if role not in ALL_COLLAB_ROLES:
+    if not role:
+        return 0
+    # Recognize both built-in AND manifest-defined custom roles.
+    # Previously only built-in roles were processed; custom roles
+    # silently bypassed audit and revert handling (v5.0 WS-3 fix).
+    is_recognized = role in ALL_COLLAB_ROLES
+    custom_cfg = None
+    if not is_recognized:
+        custom_cfg = custom_role_config(ctx.manifest, role)
+        is_recognized = custom_cfg is not None
+    if not is_recognized:
         return 0
 
     tool = payload.get("tool_name", "")
@@ -92,35 +102,48 @@ def _main() -> int:
 
     append_ledger(ctx, entry)
 
-    # Compensating revert for read-only roles
+    # Compensating revert for read-only roles (built-in AND custom)
     if entry.get("kind") == "file_mutation":
         is_read_only = role in READ_ONLY_ROLES
-        if not is_read_only:
-            cr = custom_role_config(ctx.manifest, role)
-            if cr and custom_role_scope_type(cr) == "read_only":
+        if not is_read_only and custom_cfg:
+            if custom_role_scope_type(custom_cfg) == "read_only":
                 is_read_only = True
         if is_read_only:
             import subprocess
+            revert_results = []
             for rel_path in entry.get("paths", []):
                 abs_path = (ctx.project_root / rel_path).resolve()
+                revert_mode = "failed"
+                revert_success = False
                 try:
                     check = subprocess.run(
                         ["git", "ls-files", "--error-unmatch", str(rel_path)],
                         cwd=str(ctx.project_root), capture_output=True, text=True, check=False,
                     )
                     if check.returncode == 0:
-                        subprocess.run(
+                        revert_mode = "tracked_checkout"
+                        result = subprocess.run(
                             ["git", "checkout", "--", str(rel_path)],
                             cwd=str(ctx.project_root), capture_output=True, check=False,
                         )
+                        revert_success = result.returncode == 0
                     else:
+                        revert_mode = "untracked_delete"
                         abs_path.unlink(missing_ok=True)
+                        revert_success = not abs_path.exists()
                 except Exception:
                     pass  # Best-effort revert
+                revert_results.append({
+                    "path": rel_path,
+                    "revert_mode": revert_mode,
+                    "revert_success": revert_success,
+                })
             append_ledger(ctx, {
                 "kind": "scope_violation_reverted",
                 "role": role,
+                "role_type": "custom" if custom_cfg else "builtin",
                 "paths": entry.get("paths", []),
+                "revert_results": revert_results,
                 "tool_use_id": f"revert:{entry.get('tool_use_id', 'unknown')}",
             })
 

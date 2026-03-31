@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "gate_class_semantics": {
+    "hard_gate": {
+      "behavior": "abort_on_failure",
+      "blocks_mission": true,
+      "requires_response": true,
+      "description": "Enforcement boundary. Mission aborts on failure. PreToolUse denies unauthorized mutations. SubagentStop blocks invalid results."
+    },
+    "recovery": {
+      "behavior": "log_and_compensate",
+      "blocks_mission": false,
+      "requires_response": false,
+      "description": "Audit trail and compensating action. PostToolUse logs mutations and reverts unauthorized writes by read-only roles."
+    },
+    "lifecycle": {
+      "behavior": "best_effort",
+      "blocks_mission": false,
+      "requires_response": false,
+      "description": "Best-effort context injection or exit coordination. SessionStart loads manifest, SubagentStart injects role context, Stop writes final ledger."
+    },
+    "observability": {
+      "behavior": "async_only",
+      "blocks_mission": false,
+      "requires_response": false,
+      "description": "Async state preservation. PreCompact snapshots manifest before context window compaction."
+    }
+  },
+  "hooks": {
+    "PreToolUse": {
+      "script": "hooks/scripts/collab_pre_tool.py",
+      "failure_mode": "deny",
+      "gate_class": "hard_gate",
+      "description": "Primary mutation gate. Enforces role-scoped tool permissions before every tool execution.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "degraded"
+      }
+    },
+    "SubagentStop": {
+      "script": "hooks/scripts/collab_subagent_stop.py",
+      "failure_mode": "block",
+      "gate_class": "hard_gate",
+      "description": "Primary result gate. Validates role result blocks against role-specific schemas.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "not_available"
+      }
+    },
+    "PostToolUse": {
+      "script": "hooks/scripts/collab_post_tool.py",
+      "failure_mode": "fail_open",
+      "gate_class": "recovery",
+      "description": "Audit and compensating recovery. Logs file mutations and auto-reverts unauthorized writes.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "not_available"
+      }
+    },
+    "Stop": {
+      "script": "hooks/scripts/collab_stop.py",
+      "failure_mode": "warn",
+      "gate_class": "lifecycle",
+      "description": "Exit coordination. Final ledger entries and cleanup.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "supported"
+      }
+    },
+    "SessionStart": {
+      "script": "hooks/scripts/collab_session_start.py",
+      "failure_mode": "fail_open",
+      "gate_class": "lifecycle",
+      "description": "Context injection on session resume. Loads active mission manifest.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "not_available"
+      }
+    },
+    "SubagentStart": {
+      "script": "hooks/scripts/collab_subagent_start.py",
+      "failure_mode": "fail_open",
+      "gate_class": "lifecycle",
+      "description": "Role context injection with progressive disclosure.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "supported",
+        "codex_cli": "not_available"
+      }
+    },
+    "PreCompact": {
+      "script": "hooks/scripts/collab_pre_compact.py",
+      "failure_mode": "async_fail_open",
+      "gate_class": "observability",
+      "description": "State snapshot before context window compaction.",
+      "platforms": {
+        "claude_code": "supported",
+        "copilot_cli": "not_available",
+        "codex_cli": "not_available"
+      }
+    }
+  }
+}
