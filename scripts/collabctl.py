@@ -918,6 +918,7 @@ def cmd_locate(args):
         ("Copilot CLI skill", home / ".copilot" / "skills" / "8eyes"),
         ("Copilot CLI marketplace", home / "AppData" / "Local" / "copilot" / "marketplaces" / "AgentBuildersApp-eight-eyes"),
         ("Codex CLI skill", home / ".codex" / "skills" / "8eyes"),
+        ("Codex CLI trigger", home / ".agents" / "skills" / "8eyes-collab"),
         ("Working copy", Path(__file__).resolve().parent.parent),
     ]
     print("eight-eyes install locations:")

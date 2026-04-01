@@ -82,6 +82,8 @@ INSTALL_EXPECTATIONS = {
         "skills/collab/SKILL.md",
         "hooks/scripts/collab_pre_tool.py",
         "scripts/collabctl.py",
+        "spec/enforcement_compiled.json",
+        "VERSION",
     ],
     "codex_cli": [
         "AGENTS.md",
@@ -89,6 +91,8 @@ INSTALL_EXPECTATIONS = {
         "agents",
         "hooks/scripts/collab_pre_tool.py",
         "scripts/collabctl.py",
+        "spec/enforcement_compiled.json",
+        "VERSION",
     ],
 }
 
@@ -302,12 +306,58 @@ def install_copilot_cli(target: Path) -> None:
     mode_agents = link_or_copy(REPO_ROOT / "adapters" / "copilot_cli" / "agents", target / "agents")
     mode_hooks = link_or_copy(REPO_ROOT / "hooks", target / "hooks")
     mode_scripts = link_or_copy(REPO_ROOT / "scripts", target / "scripts")
+    link_or_copy(REPO_ROOT / "spec", target / "spec")
+    link_or_copy(REPO_ROOT / "VERSION", target / "VERSION")
     write_json(target / "hooks.json", installed_copilot_hooks(target))
     print(
         "[OK] copilot_cli installed: "
         f"skill={mode_skill}, agents={mode_agents}, "
         f"references={mode_refs}, hooks={mode_hooks}, scripts={mode_scripts}"
     )
+
+
+CODEX_USER_SKILL_TARGET = HOME / ".agents" / "skills" / "8eyes-collab"
+
+
+def _write_codex_user_skill(scripts_path: Path) -> None:
+    """Create the user-skill fallback that makes /8eyes:collab trigger in Codex.
+
+    This is the decisive fix for Codex slash-command routing. Without this,
+    Codex treats /8eyes:collab as plain text. The skill is installed to
+    ~/.agents/skills/8eyes-collab/SKILL.md which Codex discovers at startup.
+    """
+    target = CODEX_USER_SKILL_TARGET
+    target.mkdir(parents=True, exist_ok=True)
+    # Resolve the absolute path to collabctl.py at install time
+    collabctl = scripts_path / "collabctl.py"
+    skill_content = f"""---
+name: 8eyes-collab
+description: >
+  Hook-enforced multi-agent review with 8 constrained roles.
+  Activate when the user types /8eyes:collab or asks for an 8eyes review.
+---
+
+# 8eyes-collab
+
+When activated, run the following commands to initialize and display the mission:
+
+```bash
+python3 "{collabctl}" --cwd "$PWD" init --objective "$ARGUMENTS"
+python3 "{collabctl}" --cwd "$PWD" status
+```
+
+Then STOP and wait for explicit user approval before dispatching any subagent roles.
+
+## Enforcement Notice
+
+Codex CLI enforcement is **experimental and partial**:
+- PreToolUse intercepts Bash commands but Write/Edit scope enforcement is prompt-level only
+- SubagentStop result validation is not available on Codex
+- For full hook-enforced scope enforcement, use Claude Code or Copilot CLI
+
+See `collabctl capabilities` for the complete enforcement model.
+"""
+    (target / "SKILL.md").write_text(skill_content, encoding="utf-8", newline="\n")
 
 
 def install_codex_cli(target: Path) -> None:
@@ -319,12 +369,18 @@ def install_codex_cli(target: Path) -> None:
     mode_refs = link_or_copy(REPO_ROOT / "skills" / "collab" / "references", target / "references")
     mode_hooks = link_or_copy(REPO_ROOT / "hooks", target / "hooks")
     mode_scripts = link_or_copy(REPO_ROOT / "scripts", target / "scripts")
+    link_or_copy(REPO_ROOT / "spec", target / "spec")
+    link_or_copy(REPO_ROOT / "VERSION", target / "VERSION")
     write_json(target / "hooks.json", installed_codex_hooks(target))
+    # User-skill fallback — the proven trigger for /8eyes:collab in Codex
+    _write_codex_user_skill(target / "scripts")
     print(
         "[OK] codex_cli installed: "
         f"skill={mode_skill}, agents={mode_agents}, AGENTS.md={mode_instructions}, "
         f"references={mode_refs}, hooks={mode_hooks}, scripts={mode_scripts}"
     )
+    if CODEX_USER_SKILL_TARGET.exists():
+        print(f"[OK] codex_cli user-skill trigger: {CODEX_USER_SKILL_TARGET}")
 
 
 INSTALLERS = {
@@ -438,6 +494,11 @@ def uninstall_platform(platform: str) -> None:
         print(f"[OK] removed {platform}: {target}")
     else:
         print(f"[OK] {platform} not installed: {target}")
+    # Codex CLI: also clean user-skill fallback
+    if platform == "codex_cli":
+        if CODEX_USER_SKILL_TARGET.exists():
+            remove_path(CODEX_USER_SKILL_TARGET)
+            print(f"[OK] removed Codex user-skill trigger: {CODEX_USER_SKILL_TARGET}")
     # Copilot CLI: also clean marketplace caches
     if platform == "copilot_cli":
         home = Path.home()
