@@ -23,13 +23,19 @@ python3 scripts/collabctl.py init \
 
 ## Code Organization
 
-Shared hook logic lives in `hooks/scripts/core/`.  The four modules there
-handle the bulk of cross-platform enforcement:
+Shared hook logic lives in `hooks/scripts/core/`. These modules handle
+the bulk of cross-platform enforcement:
 
 - `engine.py` -- manifest loading, phase validation, and lifecycle management
 - `roles.py` -- role definitions, scope rules, and permission checks
 - `paths.py` -- Git common directory resolution and state path helpers
 - `contracts.py` -- result schema validation used by the SubagentStop hook
+- `enforcement_contract.py` -- loads the enforcement spec from `spec/enforcement.yaml`
+- `role_spec_loader.py` -- loads role definitions from `spec/roles/builtin_roles.yaml`
+
+The `spec/` directory at the project root holds the canonical enforcement
+and role specifications in YAML with pre-compiled JSON for runtime
+performance. The YAML is the source of truth; the JSON is generated.
 
 Platform adapters import from `core/` rather than duplicating logic.
 

@@ -1,5 +1,31 @@
 # Migration Guide
 
+## v4 -> v5
+
+```bash
+python3 scripts/collabctl.py migrate
+```
+
+Run the command from the repository that owns the active mission. The migrator chains v1 through v5 automatically.
+
+### What Changes
+
+- `schema_version` moves to `5`.
+- New `spec/` directory containing:
+  - `enforcement.yaml` and `enforcement_compiled.json` — the canonical enforcement model defining gate classes, hook failure modes, and platform coverage for every hook.
+  - `roles/builtin_roles.yaml` and `roles/roles_compiled.json` — canonical definitions for all 8 built-in roles including scope, permissions, isolation rules, and result schemas.
+- New CLI command: `collabctl capabilities` — inspect the enforcement model with `--json` for machine-readable output and `--role <name>` to filter to a single role.
+- New CLI flag: `status --json` — machine-readable mission progress with planned, completed, pending, and skipped roles.
+- Enhanced `status` output shows planned roles, completed roles with outcomes, pending roles, skipped roles, fail-closed state, and loop count.
+- Custom roles now receive the same revert and audit treatment as built-in roles. A manifest-defined `read_only` custom role that writes a file gets an automatic revert with a ledger trail.
+- Adapter parity tests verify that installer output matches committed manifests for Copilot CLI and Codex CLI.
+
+### Breaking Changes
+
+None. v5 is backward-compatible with v4 missions. The `spec/` directory is additive.
+
+---
+
 ## v3 -> v4
 
 ```bash

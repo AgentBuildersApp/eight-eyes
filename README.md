@@ -3,7 +3,7 @@
 [![CI](https://github.com/AgentBuildersApp/eight-eyes/actions/workflows/test.yml/badge.svg)](https://github.com/AgentBuildersApp/eight-eyes/actions/workflows/test.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-4.2.0-orange.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-5.0.0--alpha-orange.svg)](VERSION)
 [![stdlib only](https://img.shields.io/badge/dependencies-zero-brightgreen.svg)](#requirements)
 
 ![eight-eyes](docs/images/header.png)
@@ -85,6 +85,12 @@ Hook: PreToolUse blocks write
 | `SubagentStop` | Role ends | Requires a structured result block with evidence. Missing or invalid results are rejected. |
 
 **The difference:** Prompts can be overridden. Hooks cannot.
+
+The full enforcement model — gate classes, failure modes, and per-platform coverage — is defined in `spec/enforcement.yaml` and inspectable at any time:
+
+```bash
+python3 scripts/collabctl.py capabilities
+```
 
 ---
 
@@ -245,12 +251,13 @@ Drop a `REVIEW.md` in your project root with review criteria. It is automaticall
 |---------|-------------|
 | `init` | Creates a mission with objective, scope, and acceptance criteria |
 | `show` | Prints the active mission state as JSON |
-| `status` | Shows role progress with timing and model identity |
+| `status` | Shows role progress with timing and model identity. `--json` for machine-readable output |
 | `timeline` | Chronological role dispatch and completion table |
 | `report` | Consolidated findings across all roles |
 | `phase <name>` | Advances the mission to the next phase |
 | `close pass\|abort` | Closes the mission with scope verification |
 | `verify` | Checks installation. `--install-only` skips git requirement. |
+| `capabilities` | Displays the enforcement model: hook semantics, gate classes, and per-platform coverage. `--role <name>` filters to one role. `--json` for machine-readable output |
 | `locate` | Prints all known install locations per platform |
 | `--version` | Prints the installed version |
 
@@ -266,7 +273,7 @@ Drop a `REVIEW.md` in your project root with review criteria. It is automaticall
 
 ## Testing
 
-148 tests. Stdlib only. No external dependencies.
+152 tests. Stdlib only. No external dependencies.
 
 ```bash
 python3 -m pytest tests/ -q
