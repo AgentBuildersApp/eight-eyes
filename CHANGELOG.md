@@ -2,35 +2,32 @@
 
 ## 5.0.0-alpha
 
-### Enforcement Model
+**Theme: Verifiable enforcement.** You no longer have to trust the README when it says "hooks enforce scope." Now you can inspect, test, and integrate against a machine-readable enforcement contract.
 
-- Machine-readable enforcement contract (`spec/enforcement.yaml`) defines gate classes, failure modes, and platform coverage for every hook.
-- `collabctl capabilities` command to inspect the enforcement model. Supports `--json` and `--role <name>`.
-- Gate class semantics clearly separate hard gates (PreToolUse, SubagentStop) from recovery hooks, lifecycle hooks, and observability hooks.
+### Inspect what's enforced
 
-### Role Specifications
+`collabctl capabilities` shows every hook, its gate class, failure mode, and per-platform support. `--json` for CI consumption. `--role <name>` to filter to a single role. The enforcement contract lives in `spec/enforcement.yaml` — an inspectable artifact, not prose.
 
-- Canonical role definitions in `spec/roles/builtin_roles.yaml` for all 8 built-in roles.
-- Compiled JSON cache (`roles_compiled.json`) for fast runtime loading.
-- Role specs include scope mode, bash policy, blind-from rules, result schemas, phase assignments, and per-platform support.
+### Machine-readable mission status
 
-### Operator Visibility
+`collabctl status --json` returns structured JSON with planned, completed, pending, and skipped roles plus fail-closed state and loop count. Text output also now categorizes roles by status instead of a flat list.
 
-- `collabctl status --json` for machine-readable mission progress.
-- Enhanced `status` output shows planned, completed, pending, and skipped roles with fail-closed state and loop count.
+### Custom roles are first-class
 
-### Custom Roles
+Custom `read_only` roles defined in the manifest now receive the same PostToolUse compensating revert as built-in read-only roles. Revert events include `revert_mode` and `revert_success` for audit trails. Ledger entries distinguish built-in from custom role type.
 
-- Custom `read_only` roles now receive the same compensating revert as built-in read-only roles.
-- Revert events include `revert_mode` (tracked_checkout, untracked_delete) and `revert_success` for audit trails.
-- Ledger entries distinguish built-in vs custom role type.
+### Platform coverage is tested
 
-### Adapter Parity
+Adapter parity tests verify that installer output matches committed manifests for Copilot CLI and Codex CLI. The enforcement contract's platform matrix is verified against actual adapter hook registrations. If a hook is marked "degraded" for Codex, all surfaces agree.
 
-- Parity tests verify installer output matches committed manifests for Copilot CLI and Codex CLI.
-- Enforcement contract platform matrix verified against actual adapter hook registrations.
-- Codex PostToolUse and SessionStart correctly classified as degraded.
+### Canonical role specifications
 
-### Coordinator
+All 8 built-in roles are defined in `spec/roles/builtin_roles.yaml` with scope mode, bash policy, blind-from rules, result schemas, phase assignments, and per-platform support. Compiled JSON for fast runtime loading.
 
-- `skills/collab/SKILL.md` rewritten with explicit trust boundaries, aligned phase model, and current result schema references.
+### Coordinator alignment
+
+`skills/collab/SKILL.md` rewritten with explicit trust boundaries, aligned phase model (`plan → implement → test → audit → verify → [docs] → close`), and current result schema references.
+
+### No breaking changes
+
+v5 is backward-compatible with v4 missions. The `spec/` directory is additive. Run `collabctl migrate` to upgrade.

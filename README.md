@@ -153,6 +153,49 @@ python3 install.py --uninstall                   # Clean removal
 
 ---
 
+## What's New in 5.0
+
+### Verifiable enforcement
+
+Previous versions told you what was enforced. Now you can verify it yourself:
+
+```bash
+python3 scripts/collabctl.py capabilities
+```
+
+```
+Hook               Gate Class     Failure Mode     Claude    Copilot   Codex
+PreToolUse         hard_gate      deny             supported supported degraded
+SubagentStop       hard_gate      block            supported supported —
+PostToolUse        recovery       fail_open        supported supported degraded
+Stop               lifecycle      warn             supported supported supported
+SessionStart       lifecycle      fail_open        supported supported degraded
+SubagentStart      lifecycle      fail_open        supported supported —
+PreCompact         observability  async_fail_open  supported —         —
+```
+
+Every hook has an explicit gate class, failure mode, and per-platform support level. `--json` gives you machine-readable output for CI. This is the enforcement contract — not a README claim, but an inspectable artifact that tests are written against.
+
+### Machine-readable mission status
+
+```bash
+python3 scripts/collabctl.py status --json
+```
+
+Returns structured JSON with planned roles, completed roles with outcomes, pending roles, skipped roles, fail-closed state, and loop count. Build dashboards, integrate with CI, or pipe to `jq` — mission state is no longer trapped in text output.
+
+### Custom roles are first-class
+
+In 4.x, a manifest-defined `read_only` custom role silently bypassed PostToolUse audit and revert handling. If your custom auditor accidentally wrote a file, nothing caught it.
+
+In 5.0, custom roles receive the same compensating revert as built-in roles. Write attempts are reverted. Revert events are ledgered with `revert_mode` (tracked checkout vs untracked delete) and `revert_success` status. The audit trail distinguishes built-in from custom role type.
+
+### Platform coverage you can test against
+
+Platform support is no longer a table in a README. It is a machine-readable matrix in `spec/enforcement.yaml`, verified by parity tests that run against the actual adapter manifests. If a hook is marked "supported" for Copilot, the Copilot adapter manifest includes it — and a test asserts that. If Codex says "degraded," every surface agrees.
+
+---
+
 ## When This Matters
 
 ### Solo Developer
