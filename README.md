@@ -27,7 +27,7 @@ Meanwhile:
 
 ### The Fix
 
-**eight-eyes** splits a code change into eight constrained roles — each aimed at a different failure surface. The skeptic never sees the implementer's narrative. The security auditor cannot edit files. The implementer cannot run Bash.
+**eight-eyes** splits a review into eight constrained roles — each aimed at a different failure surface. The skeptic never sees the implementer's narrative. The security auditor cannot edit files. The implementer cannot run Bash.
 
 These aren't suggestions in a system prompt. They are **hook-enforced walls** that intercept tool calls before execution. If the model ignores the prompt, the hook still blocks the action.
 
@@ -210,6 +210,10 @@ You're building auth or payment flows where a missed edge case has real conseque
 
 Your team uses AI coding agents but nobody reviews the output with adversarial intent. `eight-eyes` reviews AI-generated code like a junior developer's first PR — except it can't be talked out of its concerns. The skeptic literally cannot see the author's narrative.
 
+### Decisions and Documents
+
+A PRD got two thumbs up. Nobody caught that the latency budget assumes a service that hasn't been built yet. The skeptic would have — it reviews blind, without the author's framing. The verifier would have — it checks claims against evidence, not confidence. These roles constrain how the reviewer behaves, not what it reviews.
+
 ---
 
 ## The 8 Roles
@@ -286,6 +290,15 @@ Drop a `REVIEW.md` in your project root with review criteria. It is automaticall
 - No credentials in logs, error messages, or API responses
 - Database queries must use parameterized statements
 - Frontend changes must pass axe-core accessibility audit
+```
+
+Works the same for non-code reviews:
+
+```markdown
+## Review Criteria
+- Every latency claim cites a measured benchmark, not an estimate
+- Data flows that cross trust boundaries are identified
+- Dependencies on unbuilt systems are flagged as risks
 ```
 
 ### CLI Reference
