@@ -52,6 +52,16 @@
         }
       },
       "description": "List of findings. Each must include severity and issue description."
+    },
+    "research_gate_assessment": {
+      "type": "object",
+      "properties": {
+        "confidence_overstated": { "type": "boolean" },
+        "research_skip_incorrect": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "required": ["confidence_overstated", "research_skip_incorrect", "notes"],
+      "description": "Optional assessment of whether the coordinator applied the research gate honestly."
     }
   },
   "additionalProperties": true,
@@ -72,4 +82,3 @@
     }
   ]
 }
-

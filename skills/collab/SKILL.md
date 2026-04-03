@@ -51,8 +51,96 @@ Run `collabctl capabilities` for the full enforcement model.
 Every mission follows this primary phase sequence:
 
 ```
-plan -> implement -> test -> audit -> verify -> [docs] -> close
+[research] -> plan -> implement -> test -> audit -> verify -> [docs] -> close
 ```
+
+### Research Decision Gate
+
+Before entering `plan`, the coordinator runs a **Research Decision Gate**
+that produces a measurable, auditable confidence score.
+
+#### Stage 0 Classification
+
+At mission start, classify and record:
+- **Domain**: frontend, backend, infra, security, data, integration
+- **Action type**: architecture, feature, fix, refactor, config
+- **Risk**: low, medium, high, critical
+- **Confidence score**: computed via scorecard below
+- **Research mode**: `skip`, `targeted`, or `broad`
+
+#### Confidence Scorecard (0-10)
+
+Score factors (0-2 each):
+
+| Factor | 0 | 1 | 2 |
+|--------|---|---|---|
+| Root cause clarity | Unknown/guessing | Partial understanding | Identified with evidence |
+| Fix-path clarity | No clear approach | General direction | Exact changes + files known |
+| Verification clarity | No way to verify | Manual check possible | Automated test/command exists |
+| Prior pattern match | Never done this | Similar but different context | Done this exact thing before |
+| Environmental stability | Ecosystem churn likely | Mostly stable | Well-known, stable system |
+
+Subtract penalties:
+- Architecture / irreversible decision: **-3**
+- Security / auth / billing / data: **-3**
+- Cross-module / integration-heavy: **-2**
+- Recent ecosystem churn likely: **-2**
+- Weak observability / poor repro: **-2**
+
+#### Decision Table
+
+| Score | Research mode | Rule |
+|-------|-------------|------|
+| **8-10** | `skip` | May proceed directly. Low blast radius, well-known fix. |
+| **5-7** | `targeted` | Research the specific gap. Context7 + vendor docs minimum. |
+| **0-4** | `broad` | Comprehensive research required. Multiple sources, cross-reference. |
+
+**Override rules** (force minimum research mode regardless of score):
+- Architecture/design decisions → minimum `targeted`, usually `broad`
+- Security/auth/billing/data → minimum `targeted`
+- High/critical risk → `broad`
+- Previous fix attempt failed this session → `targeted` minimum
+
+#### Research Protocol
+
+**Priority order:**
+1. Context7 — library/framework docs (fastest, most accurate)
+2. Official vendor documentation — APIs, services, platforms
+3. GitHub Issues — real-world problems for the specific tool
+4. WebSearch — "[tool] best practices [current year]"
+5. Cross-reference 2+ sources before adopting a pattern
+
+**Source quality** (per Anthropic multi-agent research architecture):
+- Primary sources over SEO content farms
+- Production examples over tutorials
+- Tradeoff analysis over how-to guides
+- Published within 12 months for fast-moving domains
+- Reputable engineering orgs (Anthropic, Stripe, Cloudflare, Vercel)
+
+**Research optimizes for** (not novelty for novelty's sake):
+- Resilience and fault tolerance
+- Maintainability and supportability
+- Operational simplicity
+- Measurable outcome quality
+- Compatibility with current stack
+- Reversibility / rollback capability
+
+#### Structured /collab Buyoff
+
+Stage 0 classification and research gate output MUST be included in
+the plan-phase buyoff:
+
+```
+Objective: [what]
+Risk: [low/medium/high/critical]
+Confidence: [score]/10 — [factor breakdown]
+Research mode: [skip/targeted/broad] — [why]
+Sources reviewed: [list if research done]
+Recommendation: [approach]
+```
+
+Research findings are recorded in mission context so downstream roles
+(especially Skeptic and Verifier) can verify grounding.
 
 The `audit` phase replaces what were previously separate sequential
 phases.  During `audit`, the coordinator dispatches skeptic, security,
@@ -136,6 +224,11 @@ collabctl progress "<message>"      # append progress note
 collabctl close pass                # mission succeeded
 collabctl close abort               # mission failed
 collabctl capabilities              # display enforcement contract
+collabctl buyoff plan ...           # record a structured plan/research-gate buyoff
+collabctl research add-source ...   # attach reviewed research evidence
+collabctl research add-artifact ... # attach a research artifact
+collabctl research complete         # mark targeted/broad research complete
+collabctl research show             # inspect current research gate
 ```
 
 Always advance the phase BEFORE dispatching the role for that phase.
@@ -186,6 +279,7 @@ Loop rules mirror `collabctl` phase transitions and `max_loops`:
 collabctl enforces a transition table.  Key transitions:
 
 ```
+research   -> plan
 plan       -> implement
 implement  -> test, review
 test       -> audit, review

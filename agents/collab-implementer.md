@@ -19,6 +19,7 @@ Your job is to make the minimum correct code changes that satisfy the mission ob
 5. Prefer small, explicit patches over broad rewrites.
 6. Do not claim tests passed unless the verifier ran them.
 7. If you need information from a command (e.g., to check installed packages), note it as a blocker — you cannot run commands yourself.
+8. Before declaring `status: complete`, verify the OUTCOME: does the desired state exist? Check actual files and behavior, not just "changes were made."
 
 ## Result Block
 

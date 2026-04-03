@@ -239,6 +239,56 @@ plan → implement → test → audit → verify → docs → close
 
 During `audit`, the skeptic, security, performance, and accessibility roles run **in parallel**. If any returns `needs_changes`, the mission loops back to `implement` automatically.
 
+### Research gate and buyoff
+
+Before meaningful implementation, `/collab` can record a Stage 0 research gate:
+
+- deterministic confidence score from explicit factors and penalties
+- research mode: `skip`, `targeted`, or `broad`
+- structured plan buyoff stored in mission state
+- runtime enforcement that blocks implementer writes until required research is satisfied
+
+Use `python3 scripts/collabctl.py research show` and `python3 scripts/collabctl.py buyoff plan ...` to inspect and record this state.
+
+Minimal broad-research flow:
+
+```bash
+python3 scripts/collabctl.py init \
+  --objective "Roll out research gate" \
+  --allowed-path scripts --allowed-path hooks --allowed-path tests \
+  --criterion "Repo test suite passes." \
+  --verify-command "python3 -m pytest -q" \
+  --domain platform \
+  --action-type architecture \
+  --risk medium \
+  --root-cause-clarity 2 \
+  --fix-path-clarity 2 \
+  --verification-clarity 1 \
+  --prior-pattern-match 2 \
+  --environmental-stability 1 \
+  --penalty-architecture \
+  --penalty-cross-module \
+  --research-rationale "Cross-cutting coordinator change."
+
+python3 scripts/collabctl.py research add-source \
+  --title "collab skill policy" \
+  --kind local_doc \
+  --location "skills/collab/SKILL.md"
+
+python3 scripts/collabctl.py research add-source \
+  --title "8eyes workflow" \
+  --kind local_doc \
+  --location "commands/8eyes.md"
+
+python3 scripts/collabctl.py research add-artifact \
+  --path "docs/research-gate.md" \
+  --kind spec
+
+python3 scripts/collabctl.py research complete
+python3 scripts/collabctl.py buyoff plan --recommendation approve_with_research
+python3 scripts/collabctl.py phase implement --awaiting-user false
+```
+
 ### Blind Review
 
 The skeptic sees the objective, acceptance criteria, and changed paths — but **not** the implementer's narrative or summary. This is enforced by context shaping at the hook level. The skeptic forms an independent opinion because it does not have the implementer's framing in its context window.

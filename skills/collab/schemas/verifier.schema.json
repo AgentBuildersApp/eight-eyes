@@ -46,6 +46,16 @@
         }
       },
       "description": "One entry per acceptance criterion. Must exactly match manifest criteria count."
+    },
+    "research_trace": {
+      "type": "object",
+      "properties": {
+        "sources_influenced_design": { "type": "boolean" },
+        "research_trace_complete": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "required": ["sources_influenced_design", "research_trace_complete", "notes"],
+      "description": "Optional verification of whether cited sources materially influenced the implementation and are fully traceable."
     }
   },
   "additionalProperties": true,
@@ -84,4 +94,3 @@
     }
   ]
 }
-

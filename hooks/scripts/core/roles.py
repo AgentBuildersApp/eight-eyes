@@ -15,6 +15,7 @@ from .engine import (
     RESULT_BEGIN,
     RESULT_END,
     changed_paths_from_summary,
+    get_research_gate,
     load_role_result,
     recent_progress,
     spec_hash,
@@ -91,6 +92,33 @@ def _append_result_reference(lines: List[str]) -> None:
         f"Result format: Use {RESULT_BEGIN}/{RESULT_END} markers. "
         "See references/result-schemas.md for your role's schema."
     )
+
+
+def _append_research_gate(lines: List[str], manifest: Dict[str, Any], detail_level: int = 2) -> None:
+    """Append research-gate context from the mission manifest."""
+    gate = get_research_gate(manifest)
+    confidence = gate.get("confidence") or {}
+    total = confidence.get("total")
+    lines.append(f"Research gate status: {gate.get('status', 'incomplete')}")
+    lines.append(f"Research mode: {gate.get('research_mode') or 'unset'}")
+    lines.append(f"Confidence: {total if total is not None else 'n/a'}/10")
+    if detail_level >= 2:
+        lines.append(f"Risk: {gate.get('risk') or 'unset'}")
+        lines.append(f"Domain: {gate.get('domain') or 'unset'}")
+        lines.append(f"Action type: {gate.get('action_type') or 'unset'}")
+        override_reasons = gate.get("override_reasons") or []
+        lines.append(
+            f"Overrides: {', '.join(override_reasons) if override_reasons else '(none)'}"
+        )
+        lines.append(f"Sources reviewed: {len(gate.get('sources_reviewed') or [])}")
+        rationale = str(gate.get("rationale") or "").strip()
+        if rationale:
+            lines.append(f"Research rationale: {_truncate_text(rationale, 500)}")
+    if detail_level >= 3:
+        if confidence.get("factors"):
+            lines.append(f"Confidence factors: {confidence.get('factors')}")
+        if confidence.get("penalties"):
+            lines.append(f"Confidence penalties: {confidence.get('penalties')}")
 
 
 def validate_custom_role_name(name: str) -> tuple[bool, str]:
@@ -245,6 +273,25 @@ def _validate_reviewer_role(
     return True, ""
 
 
+def _validate_boolean_notes_object(
+    result: Dict[str, Any],
+    key: str,
+    booleans: Iterable[str],
+) -> tuple[bool, str]:
+    """Validate an optional assessment object with booleans and notes."""
+    value = result.get(key)
+    if value is None:
+        return True, ""
+    if not isinstance(value, dict):
+        return False, f"{key} must be an object when present"
+    for field in booleans:
+        if not isinstance(value.get(field), bool):
+            return False, f"{key}.{field} must be a boolean"
+    if not isinstance(value.get("notes"), str):
+        return False, f"{key}.notes must be a string"
+    return True, ""
+
+
 def validate_custom_role_result(
     role: str,
     result: Any,
@@ -319,6 +366,13 @@ def validate_role_result(
             for field in ("severity", "issue"):
                 if not isinstance(finding.get(field), str) or not finding[field].strip():
                     return False, f"skeptic findings[{idx}] must include a non-empty {field}"
+        ok, reason = _validate_boolean_notes_object(
+            result,
+            "research_gate_assessment",
+            ("confidence_overstated", "research_skip_incorrect"),
+        )
+        if not ok:
+            return False, reason
         return True, ""
 
     # Security, performance, and accessibility share a common reviewer schema:
@@ -329,7 +383,16 @@ def validate_role_result(
         "accessibility": "a11y_commands_run",
     }
     if role in _REVIEWER_COMMANDS_FIELD:
-        return _validate_reviewer_role(role, result, _REVIEWER_COMMANDS_FIELD[role])
+        ok, reason = _validate_reviewer_role(role, result, _REVIEWER_COMMANDS_FIELD[role])
+        if not ok:
+            return ok, reason
+        if role == "security":
+            return _validate_boolean_notes_object(
+                result,
+                "research_gate_assessment",
+                ("risk_classification_correct", "required_research_missing"),
+            )
+        return True, ""
 
     if role == "docs":
         if result.get("status") not in {"complete", "blocked"}:
@@ -369,6 +432,13 @@ def validate_role_result(
             evidence = item.get("evidence")
             if status in ("pass", "fail") and not isinstance(evidence, (str, list)):
                 return False, f"criterion '{criterion}' with status '{status}' must include evidence"
+        ok, reason = _validate_boolean_notes_object(
+            result,
+            "research_trace",
+            ("sources_influenced_design", "research_trace_complete"),
+        )
+        if not ok:
+            return False, reason
         return True, ""
 
     if custom_role or custom_role_config(manifest, role):
@@ -462,6 +532,7 @@ def format_manifest_summary(ctx: MissionContext) -> str:
     lines.append(f"Denied paths: {', '.join(manifest.get('denied_paths', [])) or '(none)'}")
     lines.append(f"Test paths: {', '.join(manifest.get('test_paths', [])) or '(none)'}")
     lines.append(f"Doc paths: {', '.join(manifest.get('doc_paths', [])) or '(none)'}")
+    _append_research_gate(lines, manifest, detail_level=2)
 
     criteria = manifest.get("acceptance_criteria", [])
     if criteria:
@@ -499,7 +570,7 @@ def format_manifest_summary(ctx: MissionContext) -> str:
         lines.append("Recent progress:")
         lines.extend(progress)
 
-    lines.append("Use python3 .claude/tools/collabctl.py show for full state.")
+    lines.append("Use python3 scripts/collabctl.py --cwd . show for full state.")
     return "\n".join(lines)
 
 
@@ -510,12 +581,17 @@ def format_manifest_slim(ctx: MissionContext) -> str:
     total = len(ALL_COLLAB_ROLES)
     phase = m.get("phase", "unknown")
     objective = m.get("objective", "")
-    objective_short = objective[:100]
+    objective_short = objective[:52]
     lines = [
-        f"[COLLAB] Mission {ctx.mission_id} | Phase: {phase} | {completed}/{total} roles complete",
-        f"Objective: {objective_short}{'...' if len(objective) > 100 else ''}",
-        "Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/collabctl.py show` for full state.",
+        f"[COLLAB] {ctx.mission_id} | {phase} | roles {completed}/{total}",
+        f"Objective: {objective_short}{'...' if len(objective) > 52 else ''}",
     ]
+    gate = get_research_gate(m)
+    lines.append(
+        f"Research: {gate.get('status', 'incomplete')}/{gate.get('research_mode') or 'unset'}/"
+        f"{(gate.get('confidence') or {}).get('total', 'n/a')}"
+    )
+    lines.append("Run `python3 scripts/collabctl.py show` for full state.")
     if m.get("awaiting_user"):
         lines.insert(1, "Status: AWAITING USER INPUT")
     return "\n".join(lines)
@@ -525,7 +601,6 @@ def build_subagent_context(ctx: MissionContext, role: str, detail_level: int = 2
     """Construct mission-specific subagent context with progressive disclosure."""
     manifest = ctx.manifest
     criteria = manifest.get("acceptance_criteria", [])
-    changed = changed_paths_from_summary(ctx)
     spec = manifest.get("spec") or {}
     objective = _truncate_text(str(manifest.get("objective", "")), 200)
     detail = max(1, min(3, int(detail_level)))
@@ -550,8 +625,17 @@ def build_subagent_context(ctx: MissionContext, role: str, detail_level: int = 2
         if role == "skeptic":
             lines.append("Blind review inputs: implementer claims are intentionally omitted.")
         _append_acceptance_criteria(lines, criteria)
+        changed = changed_paths_from_summary(ctx)
         _append_changed_paths(lines, changed)
         _append_scope_rules(lines, manifest)
+        if role in {"skeptic", "security", "verifier"}:
+            _append_research_gate(lines, manifest, detail_level=detail)
+            if role == "skeptic":
+                lines.append("Research audit focus: check whether research was skipped incorrectly or confidence was overstated.")
+            if role == "security":
+                lines.append("Research audit focus: confirm high-risk or security-sensitive work did not bypass required research.")
+            if role == "verifier":
+                lines.append("Research audit focus: confirm cited sources materially influenced the design, fix path, or verification plan.")
         if custom:
             instructions = custom.get("instructions")
             if isinstance(instructions, str) and instructions.strip():
@@ -591,4 +675,3 @@ __all__ = [
     "validate_custom_role_result",
     "validate_role_result",
 ]
-

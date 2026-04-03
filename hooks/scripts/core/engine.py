@@ -20,6 +20,20 @@ RESULT_BEGIN = "COLLAB_RESULT_JSON_BEGIN"
 RESULT_END = "COLLAB_RESULT_JSON_END"
 COLLAB_PREFIX = "collab-"
 SHARED_STATE_DIRNAME = "claude-collab"
+RESEARCH_FACTOR_KEYS = (
+    "root_cause_clarity",
+    "fix_path_clarity",
+    "verification_clarity",
+    "prior_pattern_match",
+    "environmental_stability",
+)
+RESEARCH_PENALTY_WEIGHTS = {
+    "architecture_irreversible": -3,
+    "security_auth_billing_data": -3,
+    "cross_module_integration": -2,
+    "ecosystem_churn": -2,
+    "weak_observability": -2,
+}
 
 
 class CollabError(RuntimeError):
@@ -247,6 +261,261 @@ def is_active_manifest(manifest: Dict[str, Any]) -> bool:
     }
 
 
+def clamp_score(value: int) -> int:
+    """Clamp a Stage 0 factor score to the supported 0..2 range."""
+    return max(0, min(2, int(value)))
+
+
+def compute_confidence_score(factors: Dict[str, int], penalties: Dict[str, int]) -> int:
+    """Return the clamped 0..10 confidence score for Stage 0 classification."""
+    total = sum(int(factors.get(key, 0)) for key in RESEARCH_FACTOR_KEYS)
+    total += sum(int(value) for value in penalties.values())
+    return max(0, min(10, total))
+
+
+def determine_research_mode(score: int) -> str:
+    """Map a confidence score to skip/targeted/broad research mode."""
+    if score >= 8:
+        return "skip"
+    if score >= 5:
+        return "targeted"
+    return "broad"
+
+
+def apply_research_overrides(classification: Dict[str, Any], score: int) -> tuple[str, List[str]]:
+    """Apply deterministic policy overrides to the base research mode."""
+    mode = determine_research_mode(score)
+    reasons: List[str] = []
+    action_type = str(classification.get("action_type") or "").strip().lower()
+    risk = str(classification.get("risk") or "").strip().lower()
+    penalties = classification.get("penalties") or {}
+    factors = classification.get("factors") or {}
+    domain = str(classification.get("domain") or "").strip().lower()
+    previous_failure = bool(classification.get("previous_failure"))
+
+    def escalate(target: str, reason: str) -> None:
+        nonlocal mode
+        order = {"skip": 0, "targeted": 1, "broad": 2}
+        if reason not in reasons:
+            reasons.append(reason)
+        if order[target] > order[mode]:
+            mode = target
+
+    if risk == "medium":
+        escalate("targeted", "medium_risk_requires_targeted_research")
+    if risk == "high":
+        escalate("broad", "high_risk_requires_broad_research")
+    if risk == "critical":
+        escalate("broad", "critical_risk_requires_broad_research")
+
+    security_penalty = int(penalties.get("security_auth_billing_data", 0)) < 0
+    if security_penalty or domain in {"security", "data", "auth", "billing"}:
+        escalate("targeted", "security_sensitive_work_requires_targeted_research")
+
+    if previous_failure:
+        escalate("targeted", "previous_failed_attempt_requires_targeted_research")
+
+    if action_type == "architecture":
+        architecture_broad = (
+            risk in {"medium", "high", "critical"}
+            or int(penalties.get("cross_module_integration", 0)) < 0
+            or security_penalty
+            or int(factors.get("verification_clarity", 0)) <= 0
+        )
+        if architecture_broad:
+            escalate("broad", "architecture_change_requires_broad_research")
+        else:
+            escalate("targeted", "architecture_change_requires_targeted_research")
+
+    return mode, reasons
+
+
+def recommendation_for_mode(mode: str) -> str:
+    """Return the default plan recommendation for a research mode."""
+    if mode == "skip":
+        return "approve"
+    if mode in {"targeted", "broad"}:
+        return "approve_with_research"
+    return "block"
+
+
+def build_research_gate(
+    *,
+    domain: str | None = None,
+    action_type: str | None = None,
+    risk: str | None = None,
+    factors: Dict[str, int] | None = None,
+    penalties: Dict[str, int] | None = None,
+    rationale: str = "",
+    sources_reviewed: List[Dict[str, Any]] | None = None,
+    research_artifacts: List[Dict[str, Any]] | None = None,
+    research_completed: bool = False,
+    previous_failure: bool = False,
+    created_at: str | None = None,
+) -> Dict[str, Any]:
+    """Build a normalized research_gate structure."""
+    created = created_at or utc_now()
+    if not domain or not action_type or not risk or factors is None or penalties is None:
+        return {
+            "status": "incomplete",
+            "domain": domain,
+            "action_type": action_type,
+            "risk": risk,
+            "confidence": {"total": None, "factors": {}, "penalties": {}},
+            "research_mode": None,
+            "override_reasons": [],
+            "rationale": rationale,
+            "sources_reviewed": list(sources_reviewed or []),
+            "research_artifacts": list(research_artifacts or []),
+            "research_completed": False,
+            "recommendation": "block",
+            "created_at": created,
+            "updated_at": created,
+        }
+
+    normalized_factors = {
+        key: clamp_score(int(factors.get(key, 0)))
+        for key in RESEARCH_FACTOR_KEYS
+    }
+    normalized_penalties = {
+        key: int(penalties.get(key, 0))
+        for key in RESEARCH_PENALTY_WEIGHTS
+    }
+    total = compute_confidence_score(normalized_factors, normalized_penalties)
+    research_mode, override_reasons = apply_research_overrides(
+        {
+            "domain": domain,
+            "action_type": action_type,
+            "risk": risk,
+            "factors": normalized_factors,
+            "penalties": normalized_penalties,
+            "previous_failure": previous_failure,
+        },
+        total,
+    )
+    status = "complete" if research_mode == "skip" else ("complete" if research_completed else "incomplete")
+    return {
+        "status": status,
+        "domain": domain,
+        "action_type": action_type,
+        "risk": risk,
+        "confidence": {
+            "total": total,
+            "factors": normalized_factors,
+            "penalties": normalized_penalties,
+        },
+        "research_mode": research_mode,
+        "override_reasons": override_reasons,
+        "rationale": rationale,
+        "sources_reviewed": list(sources_reviewed or []),
+        "research_artifacts": list(research_artifacts or []),
+        "research_completed": bool(research_completed),
+        "recommendation": recommendation_for_mode(research_mode),
+        "created_at": created,
+        "updated_at": created,
+    }
+
+
+def get_research_gate(manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the manifest research_gate object or an incomplete default."""
+    gate = manifest.get("research_gate")
+    if isinstance(gate, dict):
+        return gate
+    return build_research_gate()
+
+
+def research_is_required(gate: Dict[str, Any]) -> bool:
+    """Return True when research evidence is required before implementation."""
+    mode = gate.get("research_mode")
+    if mode in {"targeted", "broad"}:
+        return True
+    return mode != "skip"
+
+
+def latest_buyoff(manifest: Dict[str, Any], phase: str, kind: str | None = None) -> Dict[str, Any] | None:
+    """Return the most recent buyoff matching phase/kind, if any."""
+    buyoffs = manifest.get("buyoffs", [])
+    if not isinstance(buyoffs, list):
+        return None
+    for item in reversed(buyoffs):
+        if not isinstance(item, dict):
+            continue
+        if item.get("phase") != phase:
+            continue
+        if kind is not None and item.get("kind") != kind:
+            continue
+        return item
+    return None
+
+
+def plan_buyoff_is_satisfied(manifest: Dict[str, Any]) -> tuple[bool, str]:
+    """Return whether the latest plan/research_gate buyoff matches the gate mode."""
+    buyoff = latest_buyoff(manifest, "plan", "research_gate")
+    if not buyoff:
+        return False, "plan buyoff missing."
+    recommendation = str(buyoff.get("recommendation") or "").strip()
+    gate = get_research_gate(manifest)
+    mode = gate.get("research_mode")
+    if mode == "skip":
+        if recommendation != "approve":
+            return False, "plan buyoff recommendation must be 'approve' for skip research."
+        return True, "plan buyoff satisfied."
+    if mode in {"targeted", "broad"}:
+        if recommendation != "approve_with_research":
+            return False, "plan buyoff recommendation must be 'approve_with_research' when research is required."
+        return True, "plan buyoff satisfied."
+    return False, "research gate incomplete."
+
+
+def plan_buyoff_exists(manifest: Dict[str, Any]) -> bool:
+    """Return True when a structured plan/research_gate buyoff is present."""
+    return latest_buyoff(manifest, "plan", "research_gate") is not None
+
+
+def research_is_satisfied(manifest: Dict[str, Any]) -> tuple[bool, str]:
+    """Return whether the manifest satisfies the research gate."""
+    gate = get_research_gate(manifest)
+    mode = gate.get("research_mode")
+    if not mode:
+        return False, "research gate incomplete."
+    buyoff_ok, buyoff_reason = plan_buyoff_is_satisfied(manifest)
+    if not buyoff_ok:
+        return False, buyoff_reason
+
+    rationale = str(gate.get("rationale") or "").strip()
+    confidence = gate.get("confidence") or {}
+    total = confidence.get("total")
+    sources = gate.get("sources_reviewed") or []
+    artifacts = gate.get("research_artifacts") or []
+
+    if mode == "skip":
+        if total is None:
+            return False, "skip research requires a confidence score."
+        if not rationale:
+            return False, "skip research requires rationale."
+        if not gate.get("recommendation"):
+            return False, "skip research requires recommendation."
+        return True, "skip research satisfied."
+
+    if not gate.get("research_completed"):
+        return False, f"{mode} research required but research_completed is false."
+    if mode == "targeted":
+        if len(sources) < 1:
+            return False, "targeted research required but no reviewed sources recorded."
+        if not rationale:
+            return False, "targeted research required but rationale is missing."
+        return True, "targeted research satisfied."
+
+    if mode == "broad":
+        if len(sources) < 2:
+            return False, "broad research required but fewer than two reviewed sources are recorded."
+        if not artifacts and not rationale:
+            return False, "broad research required but no artifact or evidence summary is recorded."
+        return True, "broad research satisfied."
+
+    return False, "research gate mode is invalid."
+
+
 def spec_hash(project_root: Path, spec_path: str) -> Optional[str]:
     """Compute SHA-256 hex digest of a spec file, or None if missing."""
     if not spec_path:
@@ -422,27 +691,41 @@ __all__ = [
     "COLLAB_PREFIX",
     "CollabError",
     "MissionContext",
+    "RESEARCH_FACTOR_KEYS",
+    "RESEARCH_PENALTY_WEIGHTS",
     "RESULT_BEGIN",
     "RESULT_END",
     "SHARED_STATE_DIRNAME",
     "active_pointer_path",
+    "apply_research_overrides",
     "append_ledger",
     "atomic_write_json",
     "atomic_write_text",
+    "build_research_gate",
     "changed_paths_from_ledger",
     "changed_paths_from_summary",
+    "clamp_score",
+    "compute_confidence_score",
+    "determine_research_mode",
     "extract_result_block",
     "file_lock",
     "format_manifest_slim",
+    "get_research_gate",
     "hook_context",
     "is_active_manifest",
+    "latest_buyoff",
     "load_active_context",
     "load_json",
     "load_role_result",
+    "plan_buyoff_is_satisfied",
+    "plan_buyoff_exists",
     "pretool_deny",
     "print_json",
     "recent_progress",
+    "recommendation_for_mode",
     "repo_git",
+    "research_is_required",
+    "research_is_satisfied",
     "resolve_git_common_dir",
     "resolve_worktree_root",
     "result_file",
@@ -452,4 +735,3 @@ __all__ = [
     "stop_block",
     "utc_now",
 ]
-

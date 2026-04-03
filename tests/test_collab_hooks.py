@@ -123,6 +123,16 @@ class CollabHookTests(unittest.TestCase):
             check=True,
         )
 
+    def run_ctl_expect_failure(self, *args: str) -> subprocess.CompletedProcess:
+        """Run collabctl expecting a non-zero exit status."""
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--cwd", str(self.repo), *args],
+            cwd=str(self.repo),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
     def init_mission(self, **extra_args) -> dict:
         """Initialize a standard mission and return the parsed output."""
         cmd = [
@@ -146,7 +156,47 @@ class CollabHookTests(unittest.TestCase):
             cmd.append("--tdd")
         if "timeout_hours" in extra_args:
             cmd.extend(["--timeout-hours", str(extra_args["timeout_hours"])])
-        return json.loads(self.run_ctl(*cmd).stdout)
+        if not extra_args.get("no_stage0"):
+            cmd.extend([
+                "--domain", "backend",
+                "--action-type", "fix",
+                "--risk", "low",
+                "--root-cause-clarity", "2",
+                "--fix-path-clarity", "2",
+                "--verification-clarity", "2",
+                "--prior-pattern-match", "1",
+                "--environmental-stability", "2",
+                "--research-rationale", "Default low-risk mission used for test harness setup.",
+            ])
+        result = json.loads(self.run_ctl(*cmd).stdout)
+        if not extra_args.get("no_stage0"):
+            self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve")
+        return result
+
+    def set_research_gate(self, gate: dict) -> None:
+        """Replace the manifest research_gate."""
+        manifest = self.load_manifest()
+        manifest["research_gate"] = gate
+        self.save_manifest(manifest)
+
+    def append_buyoff(self, buyoff: dict) -> None:
+        """Append a structured buyoff entry to the manifest."""
+        manifest = self.load_manifest()
+        manifest.setdefault("buyoffs", []).append(buyoff)
+        self.save_manifest(manifest)
+
+    def mark_research_complete(self, sources=None, artifacts=None) -> None:
+        """Mark the research gate complete with optional sources/artifacts."""
+        manifest = self.load_manifest()
+        gate = manifest.setdefault("research_gate", {})
+        if sources is not None:
+            gate["sources_reviewed"] = sources
+            manifest["evidence_sources"] = list(sources)
+        if artifacts is not None:
+            gate["research_artifacts"] = artifacts
+        gate["research_completed"] = True
+        gate["status"] = "complete"
+        self.save_manifest(manifest)
 
     def set_phase(self, phase: str, awaiting_user: bool = False, force: bool = True):
         args = ["phase", phase, "--awaiting-user", "true" if awaiting_user else "false"]
@@ -398,7 +448,9 @@ class CollabHookTests(unittest.TestCase):
     def test_15_verifier_approved_command_allowed(self):
         """Test 15: Verifier Bash approved verification command → allowed."""
         self.init_mission()
-        self.set_phase("verify")
+        manifest = self.load_manifest()
+        manifest["phase"] = "verify"
+        self.save_manifest(manifest)
         result = self.hook_json("collab_pre_tool.py", {
             "cwd": str(self.repo), "agent_type": "collab-verifier",
             "tool_name": "Bash", "tool_input": {"command": "pytest -q"},
@@ -408,7 +460,9 @@ class CollabHookTests(unittest.TestCase):
     def test_16_verifier_unapproved_command_denied(self):
         """Test 16: Verifier Bash unapproved command → denied."""
         self.init_mission()
-        self.set_phase("verify")
+        manifest = self.load_manifest()
+        manifest["phase"] = "verify"
+        self.save_manifest(manifest)
         result = self.hook_json("collab_pre_tool.py", {
             "cwd": str(self.repo), "agent_type": "collab-verifier",
             "tool_name": "Bash", "tool_input": {"command": "npm test"},
@@ -502,7 +556,9 @@ class CollabHookTests(unittest.TestCase):
     def test_23_subagent_stop_blocks_verifier_wrong_criteria_count(self):
         """Test 23: SubagentStop blocks verifier with wrong criteria count → blocked."""
         self.init_mission()
-        self.set_phase("verify")
+        manifest = self.load_manifest()
+        manifest["phase"] = "verify"
+        self.save_manifest(manifest)
         # Mission has 2 criteria but verifier reports only 1
         msg = textwrap.dedent("""
             COLLAB_RESULT_JSON_BEGIN
@@ -961,8 +1017,23 @@ class CollabHookTests(unittest.TestCase):
             "--criterion", "Works",
             "--verify-command", "pytest -q",
             "--max-loops", "1",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "Loop-count behavior is local and well understood.",
         ]
         json.loads(self.run_ctl(*cmd).stdout)
+        self.run_ctl(
+            "buyoff",
+            "plan",
+            "--objective", "Test loop limit",
+            "--recommendation", "approve",
+        )
 
         # plan -> implement -> review -> implement (loop_count=1, allowed)
         self.set_phase("implement", force=False)
@@ -2097,8 +2168,8 @@ class CollabHookTests(unittest.TestCase):
     def test_124_force_logged_to_ledger(self):
         """--force usage is recorded in ledger as force_override."""
         self.init_mission()
-        # Use --force to skip from plan to verify (normally illegal)
-        self.set_phase("verify", force=True)
+        # Use --force to skip from plan to docs (normally illegal)
+        self.set_phase("docs", force=True)
         ctx = self.common.load_active_context(self.repo)
         ledger = ctx.mission_dir / "ledger.ndjson"
         lines = ledger.read_text(encoding="utf-8").splitlines()
@@ -2108,7 +2179,7 @@ class CollabHookTests(unittest.TestCase):
         ]
         self.assertTrue(len(force_entries) >= 1)
         self.assertEqual(force_entries[0]["phase_from"], "plan")
-        self.assertEqual(force_entries[0]["phase_to"], "verify")
+        self.assertEqual(force_entries[0]["phase_to"], "docs")
 
     def test_125_skip_role_validates_audit_roles(self):
         """--skip-role rejects non-audit role names."""
@@ -2515,6 +2586,545 @@ class CollabHookTests(unittest.TestCase):
         content = install_py.read_text(encoding="utf-8")
         self.assertIn("subagentStart", content)
 
+    def test_149_init_creates_incomplete_research_gate_when_stage0_missing(self):
+        """Init without Stage 0 inputs leaves the research gate incomplete."""
+        self.init_mission(no_stage0=True)
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["research_gate"]["status"], "incomplete")
+        self.assertEqual(manifest["buyoffs"], [])
+
+    def test_150_init_computes_skip_research_gate_for_high_confidence_local_fix(self):
+        """High-confidence low-risk work defaults to skip."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--allowed-path", "tests",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "Localized low-risk fix with clear verification.",
+        )
+        gate = self.load_manifest()["research_gate"]
+        self.assertEqual(gate["confidence"]["total"], 9)
+        self.assertEqual(gate["research_mode"], "skip")
+        self.assertEqual(gate["recommendation"], "approve")
+
+    def test_151_init_escalates_medium_risk_to_targeted_even_with_high_score(self):
+        """Medium risk forces at least targeted research."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "Medium-risk integration requires targeted grounding.",
+        )
+        gate = self.load_manifest()["research_gate"]
+        self.assertEqual(gate["research_mode"], "targeted")
+        self.assertIn("medium_risk_requires_targeted_research", gate["override_reasons"])
+
+    def test_152_init_escalates_high_risk_to_broad(self):
+        """High risk forces broad research."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "high",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--research-rationale", "High-risk change must be broadly researched.",
+        )
+        gate = self.load_manifest()["research_gate"]
+        self.assertEqual(gate["research_mode"], "broad")
+        self.assertIn("high_risk_requires_broad_research", gate["override_reasons"])
+
+    def test_153_init_escalates_security_domain_to_targeted(self):
+        """Security-sensitive work forces at least targeted research."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-security-data",
+            "--research-rationale", "Security-sensitive work should not skip research.",
+        )
+        gate = self.load_manifest()["research_gate"]
+        self.assertEqual(gate["research_mode"], "targeted")
+        self.assertIn("security_sensitive_work_requires_targeted_research", gate["override_reasons"])
+
+    def test_154_phase_to_implement_blocked_when_research_gate_incomplete(self):
+        """Implement phase is blocked when Stage 0 classification is missing."""
+        self.init_mission(no_stage0=True)
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("research gate incomplete", proc.stderr)
+
+    def test_155_phase_to_implement_blocked_when_plan_buyoff_missing(self):
+        """Implement phase requires a plan buyoff even for skip mode."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "High-confidence local fix.",
+        )
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false")
+        self.assertIn("plan buyoff missing", proc.stderr)
+
+    def test_156_phase_to_implement_allowed_for_skip_with_buyoff(self):
+        """Skip mode can enter implement after a plan buyoff."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "High-confidence local fix.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.assertEqual(self.load_manifest()["phase"], "implement")
+
+    def test_157_phase_to_implement_blocked_for_targeted_until_research_complete(self):
+        """Targeted research blocks implement until marked complete."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false")
+        self.assertIn("targeted research required", proc.stderr)
+
+    def test_158_phase_to_implement_allowed_after_targeted_research_complete(self):
+        """Targeted research can proceed after source evidence and completion."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("research", "add-source", "--title", "Vendor docs", "--kind", "vendor_doc", "--location", "https://example.com/docs", "--notes", "API contract")
+        self.run_ctl("research", "complete")
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.assertEqual(self.load_manifest()["phase"], "implement")
+
+    def test_159_implementer_write_denied_when_research_gate_unsatisfied(self):
+        """PreToolUse blocks implementer writes when research is still required."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        manifest = self.load_manifest()
+        manifest["phase"] = "implement"
+        self.save_manifest(manifest)
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-implementer",
+            "tool_name": "Write", "tool_input": {"file_path": "src/new_file.py", "content": "x = 1\n"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Research gate not satisfied", result["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_160_implementer_write_allowed_when_research_gate_satisfied(self):
+        """PreToolUse allows implementer writes after research completion and buyoff."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("research", "add-source", "--title", "Vendor docs", "--kind", "vendor_doc", "--location", "https://example.com/docs", "--notes", "API contract")
+        self.run_ctl("research", "complete")
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        self.set_phase("implement")
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo), "agent_type": "collab-implementer",
+            "tool_name": "Write", "tool_input": {"file_path": "src/new_file.py", "content": "x = 1\n"},
+        })
+        self.assertIsNone(result)
+
+    def test_161_phase_to_verify_requires_research_trace_if_research_was_required(self):
+        """Verify is blocked if required research evidence disappears."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("research", "add-source", "--title", "Vendor docs", "--kind", "vendor_doc", "--location", "https://example.com/docs", "--notes", "API contract")
+        self.run_ctl("research", "complete")
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.set_phase("test", awaiting_user=False, force=False)
+        for role in ("skeptic", "security", "performance", "accessibility"):
+            self.save_role_result(role, self.valid_role_result(role))
+        self.set_phase("audit", awaiting_user=False, force=False)
+        manifest = self.load_manifest()
+        manifest["research_gate"]["sources_reviewed"] = []
+        manifest["evidence_sources"] = []
+        self.save_manifest(manifest)
+        proc = self.run_ctl_expect_failure("phase", "verify", "--awaiting-user", "false")
+        self.assertIn("reviewed sources", proc.stderr)
+
+    def test_162_build_subagent_context_includes_research_gate_for_skeptic(self):
+        """Skeptic context includes research mode, confidence, and rationale."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        ctx = self.common.load_active_context(self.repo)
+        text = self.common.build_subagent_context(ctx, "skeptic", detail_level=2)
+        self.assertIn("Research gate status:", text)
+        self.assertIn("Research mode: targeted", text)
+        self.assertIn("Confidence: 6/10", text)
+        self.assertIn("Research rationale:", text)
+
+    def test_163_build_subagent_context_includes_research_gate_for_verifier(self):
+        """Verifier context includes sources reviewed."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+            "--source-reviewed", "Vendor docs",
+        )
+        ctx = self.common.load_active_context(self.repo)
+        text = self.common.build_subagent_context(ctx, "verifier", detail_level=3)
+        self.assertIn("Sources reviewed: 1", text)
+        self.assertIn("Research audit focus:", text)
+
+    def test_164_skeptic_schema_accepts_research_gate_assessment(self):
+        """Skeptic schema includes research gate assessment fields."""
+        schema = json.loads((PLUGIN_ROOT / "skills" / "collab" / "schemas" / "skeptic.schema.json").read_text(encoding="utf-8"))
+        self.assertIn("research_gate_assessment", schema["properties"])
+        props = schema["properties"]["research_gate_assessment"]["properties"]
+        self.assertIn("confidence_overstated", props)
+        self.assertIn("research_skip_incorrect", props)
+
+    def test_165_security_schema_accepts_research_gate_assessment(self):
+        """Security schema includes research gate assessment fields."""
+        schema = json.loads((PLUGIN_ROOT / "skills" / "collab" / "schemas" / "security.schema.json").read_text(encoding="utf-8"))
+        self.assertIn("research_gate_assessment", schema["properties"])
+        props = schema["properties"]["research_gate_assessment"]["properties"]
+        self.assertIn("risk_classification_correct", props)
+        self.assertIn("required_research_missing", props)
+
+    def test_166_verifier_schema_accepts_research_trace(self):
+        """Verifier schema includes research trace fields."""
+        schema = json.loads((PLUGIN_ROOT / "skills" / "collab" / "schemas" / "verifier.schema.json").read_text(encoding="utf-8"))
+        self.assertIn("research_trace", schema["properties"])
+        props = schema["properties"]["research_trace"]["properties"]
+        self.assertIn("sources_influenced_design", props)
+        self.assertIn("research_trace_complete", props)
+
+    def test_167_e2e_low_risk_skip_flow(self):
+        """Low-risk skip flow can pass end-to-end."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "low",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "1",
+            "--environmental-stability", "2",
+            "--research-rationale", "Localized low-risk fix.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.set_phase("test", awaiting_user=False, force=False)
+        for role in ("skeptic", "security", "performance", "accessibility"):
+            self.save_role_result(role, self.valid_role_result(role))
+        self.set_phase("audit", awaiting_user=False, force=False)
+        self.set_phase("verify", awaiting_user=False, force=False)
+        self.close_mission("pass")
+
+    def test_168_e2e_targeted_research_flow(self):
+        """Targeted research flow blocks before completion and then passes."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "integration",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "1",
+            "--verification-clarity", "1",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-cross-module",
+            "--research-rationale", "Cross-module change needs targeted research.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false")
+        self.assertNotEqual(proc.returncode, 0)
+        self.run_ctl("research", "add-source", "--title", "Vendor docs", "--kind", "vendor_doc", "--location", "https://example.com/docs", "--notes", "API contract")
+        self.run_ctl("research", "add-artifact", "--path", "docs/research-notes.md", "--kind", "notes", "--notes", "Decision notes")
+        self.run_ctl("research", "complete")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.set_phase("test", awaiting_user=False, force=False)
+        for role in ("skeptic", "security", "performance", "accessibility"):
+            self.save_role_result(role, self.valid_role_result(role))
+        self.set_phase("audit", awaiting_user=False, force=False)
+        self.set_phase("verify", awaiting_user=False, force=False)
+        self.close_mission("pass")
+
+    def test_169_e2e_broad_research_flow(self):
+        """Broad research flow requires multiple sources and then passes."""
+        self.run_ctl(
+            "init",
+            "--objective", "Implement a safe change",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Behavior matches the requested objective",
+            "--verify-command", "pytest -q",
+            "--domain", "security",
+            "--action-type", "architecture",
+            "--risk", "high",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "0",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--penalty-architecture",
+            "--penalty-security-data",
+            "--research-rationale", "High-risk architecture change requires broad research.",
+        )
+        self.run_ctl("buyoff", "plan", "--objective", "Implement a safe change", "--recommendation", "approve_with_research")
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false")
+        self.assertNotEqual(proc.returncode, 0)
+        self.run_ctl("research", "add-source", "--title", "Vendor docs", "--kind", "vendor_doc", "--location", "https://example.com/docs-1", "--notes", "Primary guidance")
+        self.run_ctl("research", "add-source", "--title", "Issue tracker", "--kind", "issue", "--location", "https://example.com/issues/1", "--notes", "Known edge cases")
+        self.run_ctl("research", "add-artifact", "--path", "docs/research-architecture.md", "--kind", "notes", "--notes", "Architecture tradeoffs")
+        self.run_ctl("research", "complete")
+        self.set_phase("implement", awaiting_user=False, force=False)
+        self.set_phase("test", awaiting_user=False, force=False)
+        for role in ("skeptic", "security", "performance", "accessibility"):
+            self.save_role_result(role, self.valid_role_result(role))
+        self.set_phase("audit", awaiting_user=False, force=False)
+        self.set_phase("verify", awaiting_user=False, force=False)
+        self.close_mission("pass")
+
+    def test_170_force_cannot_bypass_implement_research_gate(self):
+        """Force does not bypass research safety gates for implement."""
+        self.init_mission(no_stage0=True)
+        proc = self.run_ctl_expect_failure("phase", "implement", "--awaiting-user", "false", "--force")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("research gate incomplete", proc.stderr)
+
+    def test_171_force_cannot_bypass_verify_audit_gate(self):
+        """Force does not bypass verify safety gates."""
+        self.init_mission()
+        proc = self.run_ctl_expect_failure("phase", "verify", "--awaiting-user", "false", "--force")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("audit role results missing", proc.stderr)
+
+    def test_172_custom_write_role_blocked_when_research_gate_unsatisfied(self):
+        """Custom write roles are blocked during implement when research is unsatisfied."""
+        self.run_ctl(
+            "init",
+            "--objective", "Custom writer mission",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Works",
+            "--verify-command", "pytest -q",
+            "--custom-role", "name=builder,scope=write_allowed,commands=",
+        )
+        manifest = self.load_manifest()
+        manifest["phase"] = "implement"
+        self.save_manifest(manifest)
+        result = self.hook_json("collab_pre_tool.py", {
+            "cwd": str(self.repo),
+            "agent_type": "collab-builder",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "src/custom.py", "content": "x = 1\n"},
+        })
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("Research gate not satisfied", result["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_173_plan_buyoff_recommendation_must_match_research_mode(self):
+        """Plan buyoff recommendations must match the required research mode."""
+        self.run_ctl(
+            "init",
+            "--objective", "Targeted mission",
+            "--spec-path", "docs/spec.md",
+            "--allowed-path", "src",
+            "--criterion", "Works",
+            "--verify-command", "pytest -q",
+            "--domain", "backend",
+            "--action-type", "fix",
+            "--risk", "medium",
+            "--root-cause-clarity", "2",
+            "--fix-path-clarity", "2",
+            "--verification-clarity", "2",
+            "--prior-pattern-match", "2",
+            "--environmental-stability", "2",
+            "--research-rationale", "Medium-risk changes require targeted research.",
+        )
+        proc = self.run_ctl_expect_failure(
+            "buyoff", "plan",
+            "--objective", "Targeted mission",
+            "--recommendation", "approve",
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("approve_with_research", proc.stderr)
+
 
 # ── WS-4: Adapter Parity Tests (v5.0) ──
 
@@ -2684,5 +3294,3 @@ class TestAdapterParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
-

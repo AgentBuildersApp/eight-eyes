@@ -65,6 +65,16 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Security scan commands executed during the review."
+    },
+    "research_gate_assessment": {
+      "type": "object",
+      "properties": {
+        "risk_classification_correct": { "type": "boolean" },
+        "required_research_missing": { "type": "boolean" },
+        "notes": { "type": "string" }
+      },
+      "required": ["risk_classification_correct", "required_research_missing", "notes"],
+      "description": "Optional assessment of whether the risk classification and required research were correct."
     }
   },
   "additionalProperties": true,
@@ -88,4 +98,3 @@
     }
   ]
 }
-

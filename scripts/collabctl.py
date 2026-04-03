@@ -34,12 +34,21 @@ sys.path.insert(0, str(_PLUGIN_ROOT / "hooks" / "scripts"))
 from collab_common import (  # noqa: E402
     CUSTOM_ROLE_SCOPE_TYPES,
     active_pointer_path,
+    build_research_gate,
     append_ledger,
     atomic_write_json,
+    get_research_gate,
     is_active_manifest,
+    latest_buyoff,
     load_active_context,
     load_json,
     load_role_result,
+    plan_buyoff_is_satisfied,
+    plan_buyoff_exists,
+    research_is_required,
+    research_is_satisfied,
+    RESEARCH_FACTOR_KEYS,
+    RESEARCH_PENALTY_WEIGHTS,
     resolve_git_common_dir,
     resolve_worktree_root,
     spec_hash,
@@ -379,6 +388,99 @@ def _role_names_for_status(manifest: dict) -> list[str]:
     return roles
 
 
+def _source_record_from_cli(raw: str) -> dict[str, str]:
+    """Normalize a simple source string into a structured source record."""
+    text = str(raw or "").strip()
+    return {
+        "title": text,
+        "kind": "reviewed_source",
+        "location": "",
+        "notes": "",
+        "added_at": utc_now(),
+    }
+
+
+def _artifact_record_from_cli(raw: str) -> dict[str, str]:
+    """Normalize a simple artifact path into a structured artifact record."""
+    text = str(raw or "").strip()
+    return {
+        "path": text,
+        "kind": "artifact",
+        "notes": "",
+        "added_at": utc_now(),
+    }
+
+
+def _stage0_inputs_present(args) -> bool:
+    """Return True when any Stage 0 research-gate inputs were supplied."""
+    keys = (
+        "domain",
+        "action_type",
+        "risk",
+        "root_cause_clarity",
+        "fix_path_clarity",
+        "verification_clarity",
+        "prior_pattern_match",
+        "environmental_stability",
+        "research_rationale",
+    )
+    if any(getattr(args, key, None) not in (None, "") for key in keys):
+        return True
+    list_keys = ("source_reviewed", "research_artifact")
+    if any(getattr(args, key, None) for key in list_keys):
+        return True
+    penalty_keys = (
+        "penalty_architecture",
+        "penalty_security_data",
+        "penalty_cross_module",
+        "penalty_ecosystem_churn",
+        "penalty_weak_observability",
+    )
+    return any(bool(getattr(args, key, False)) for key in penalty_keys)
+
+
+def _penalty_breakdown(args) -> dict[str, int]:
+    """Return manifest penalty values using deterministic negative integers."""
+    return {
+        "architecture_irreversible": RESEARCH_PENALTY_WEIGHTS["architecture_irreversible"] if getattr(args, "penalty_architecture", False) else 0,
+        "security_auth_billing_data": RESEARCH_PENALTY_WEIGHTS["security_auth_billing_data"] if getattr(args, "penalty_security_data", False) else 0,
+        "cross_module_integration": RESEARCH_PENALTY_WEIGHTS["cross_module_integration"] if getattr(args, "penalty_cross_module", False) else 0,
+        "ecosystem_churn": RESEARCH_PENALTY_WEIGHTS["ecosystem_churn"] if getattr(args, "penalty_ecosystem_churn", False) else 0,
+        "weak_observability": RESEARCH_PENALTY_WEIGHTS["weak_observability"] if getattr(args, "penalty_weak_observability", False) else 0,
+    }
+
+
+def build_research_gate_from_args(args, previous_failure: bool = False) -> dict:
+    """Build the init-time research gate from CLI args."""
+    if not _stage0_inputs_present(args):
+        return build_research_gate(created_at=utc_now())
+
+    required = ("domain", "action_type", "risk")
+    missing = [key for key in required if not getattr(args, key, None)]
+    factor_values = {key: getattr(args, key, None) for key in RESEARCH_FACTOR_KEYS}
+    missing_factors = [key for key, value in factor_values.items() if value is None]
+    if missing or missing_factors:
+        missing_names = ", ".join(missing + missing_factors)
+        raise SystemExit(f"incomplete Stage 0 classification: missing {missing_names}")
+
+    gate = build_research_gate(
+        domain=args.domain,
+        action_type=args.action_type,
+        risk=args.risk,
+        factors=factor_values,
+        penalties=_penalty_breakdown(args),
+        rationale=getattr(args, "research_rationale", "") or "",
+        sources_reviewed=[_source_record_from_cli(item) for item in (getattr(args, "source_reviewed", None) or [])],
+        research_artifacts=[_artifact_record_from_cli(item) for item in (getattr(args, "research_artifact", None) or [])],
+        research_completed=bool(getattr(args, "research_completed", False)),
+        previous_failure=previous_failure,
+        created_at=utc_now(),
+    )
+    if gate.get("research_mode") in {"targeted", "broad"} and not gate.get("research_completed"):
+        gate["status"] = "incomplete"
+    return gate
+
+
 # ── Commands ──
 
 
@@ -436,6 +538,9 @@ def cmd_init(args):
         "planned_roles": list(ROLE_STATUS_ORDER),
         "skipped_roles": [],
         "fail_closed": bool(args.fail_closed),
+        "research_gate": build_research_gate_from_args(args, previous_failure=False),
+        "buyoffs": [],
+        "evidence_sources": [],
         "role_failure_counts": {},
         "loop_count": 0,
         "loop_epoch": 0,
@@ -443,6 +548,9 @@ def cmd_init(args):
         "created_at": utc_now(),
         "updated_at": utc_now(),
     }
+
+    if manifest["research_gate"].get("sources_reviewed"):
+        manifest["evidence_sources"] = list(manifest["research_gate"]["sources_reviewed"])
 
     # Capture git baseline for close-time scope verification
     import subprocess as _sp
@@ -516,6 +624,9 @@ def cmd_status(args):
     role_assignments = manifest.get("role_assignments", {})
     planned = manifest.get("planned_roles", list(ROLE_STATUS_ORDER))
     skipped = manifest.get("skipped_roles", [])
+    research_gate = get_research_gate(manifest)
+    buyoff_ok, buyoff_reason = plan_buyoff_is_satisfied(manifest)
+    research_ok, research_reason = research_is_satisfied(manifest)
 
     # Categorize roles
     completed_roles: list[str] = []
@@ -547,6 +658,18 @@ def cmd_status(args):
             "phase": manifest.get("phase", "unknown"),
             "elapsed": _format_elapsed(manifest.get("created_at")),
             "fail_closed": manifest.get("fail_closed", False),
+            "research_gate": {
+                "status": research_gate.get("status"),
+                "research_mode": research_gate.get("research_mode"),
+                "confidence": (research_gate.get("confidence") or {}).get("total"),
+                "override_reasons": research_gate.get("override_reasons", []),
+            },
+            "plan_buyoff": {
+                "present": plan_buyoff_exists(manifest),
+                "satisfied": buyoff_ok,
+                "reason": buyoff_reason,
+            },
+            "blocker": None if research_ok else research_reason,
             "loop_count": manifest.get("loop_count", 0),
             "max_loops": manifest.get("max_loops", 3),
             "planned_roles": planned,
@@ -564,6 +687,11 @@ def cmd_status(args):
         f"Current phase: {manifest.get('phase', 'unknown')}",
         f"Elapsed: {_format_elapsed(manifest.get('created_at'))}",
         f"Fail-closed: {manifest.get('fail_closed', False)}",
+        "Research gate: "
+        f"{research_gate.get('status', 'incomplete')} "
+        f"(mode={research_gate.get('research_mode') or 'unset'}, "
+        f"confidence={(research_gate.get('confidence') or {}).get('total', 'n/a')})",
+        f"Plan buyoff: {'satisfied' if buyoff_ok else 'unsatisfied'} ({buyoff_reason})",
         f"Loops: {manifest.get('loop_count', 0)}/{manifest.get('max_loops', 3)}",
         f"Planned roles: {', '.join(planned)}",
         f"Completed: {', '.join(completed_roles) if completed_roles else '(none)'}",
@@ -571,6 +699,8 @@ def cmd_status(args):
         f"Skipped: {', '.join(skipped) if skipped else '(none)'}",
         "Roles:",
     ]
+    if not research_ok:
+        lines.insert(7, f"Blocker: {research_reason}")
 
     for detail in role_details:
         role = detail["role"]
@@ -698,6 +828,131 @@ def _parse_simple_yaml(path: Path) -> dict | None:
         return None
 
 
+def cmd_buyoff(args):
+    """Append a structured buyoff record to the active mission manifest."""
+    cwd = Path(args.cwd or ".").resolve()
+    loaded = load_active(cwd)
+    if not loaded:
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
+    _, mid, _, mpath, manifest = loaded
+    gate = get_research_gate(manifest)
+
+    if args.phase == "plan":
+        if not gate.get("research_mode"):
+            raise SystemExit("Cannot record plan buyoff: research gate is incomplete.")
+        expected_recommendation = "approve" if gate.get("research_mode") == "skip" else "approve_with_research"
+        chosen_recommendation = args.recommendation or gate.get("recommendation") or expected_recommendation
+        if chosen_recommendation != expected_recommendation:
+            raise SystemExit(
+                f"Cannot record plan buyoff: recommendation must be '{expected_recommendation}' "
+                f"for research mode '{gate.get('research_mode')}'."
+            )
+        record = {
+            "phase": "plan",
+            "kind": "research_gate",
+            "objective": args.objective or manifest.get("objective", ""),
+            "risk": gate.get("risk"),
+            "confidence_score": (gate.get("confidence") or {}).get("total"),
+            "confidence_breakdown": (gate.get("confidence") or {}).get("factors", {}),
+            "penalty_breakdown": (gate.get("confidence") or {}).get("penalties", {}),
+            "research_mode": gate.get("research_mode"),
+            "why_research_required": args.why or gate.get("rationale") or "",
+            "sources_reviewed": list(gate.get("sources_reviewed") or []),
+            "recommendation": chosen_recommendation,
+            "note": args.note or "",
+            "created_at": utc_now(),
+        }
+    else:
+        record = {
+            "phase": args.phase,
+            "kind": args.kind,
+            "objective": args.objective or manifest.get("objective", ""),
+            "recommendation": args.recommendation or "",
+            "why": args.why or "",
+            "sources_reviewed": [_source_record_from_cli(item) for item in (args.source_reviewed or [])],
+            "note": args.note or "",
+            "created_at": utc_now(),
+        }
+
+    manifest.setdefault("buyoffs", []).append(record)
+    save_manifest(mpath, manifest)
+    print(f"{mid}: recorded {args.phase} buyoff ({record.get('kind', args.kind)})")
+    return 0
+
+
+def cmd_research(args):
+    """Manage the active mission's research-gate evidence and completion state."""
+    cwd = Path(args.cwd or ".").resolve()
+    loaded = load_active(cwd)
+    if not loaded:
+        raise SystemExit("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
+    _, mid, _, mpath, manifest = loaded
+    gate = get_research_gate(manifest)
+    manifest.setdefault("research_gate", gate)
+    manifest.setdefault("evidence_sources", [])
+
+    if args.research_command == "add-source":
+        record = {
+            "title": args.title,
+            "kind": args.kind,
+            "location": args.location,
+            "notes": args.notes or "",
+            "added_at": utc_now(),
+        }
+        gate.setdefault("sources_reviewed", []).append(record)
+        manifest["evidence_sources"].append(record)
+        gate["updated_at"] = utc_now()
+        save_manifest(mpath, manifest)
+        print(f"{mid}: research source added")
+        return 0
+
+    if args.research_command == "add-artifact":
+        record = {
+            "path": args.path,
+            "kind": args.kind,
+            "notes": args.notes or "",
+            "added_at": utc_now(),
+        }
+        gate.setdefault("research_artifacts", []).append(record)
+        gate["updated_at"] = utc_now()
+        save_manifest(mpath, manifest)
+        print(f"{mid}: research artifact added")
+        return 0
+
+    if args.research_command == "complete":
+        mode = gate.get("research_mode")
+        if mode == "skip":
+            print(f"{mid}: research mode is skip; explicit completion not required")
+            return 0
+        if mode not in {"targeted", "broad"}:
+            raise SystemExit("Cannot complete research: research gate is incomplete.")
+        sources = gate.get("sources_reviewed") or []
+        artifacts = gate.get("research_artifacts") or []
+        rationale = str(gate.get("rationale") or "").strip()
+        if mode == "targeted":
+            if len(sources) < 1:
+                raise SystemExit("Cannot complete research: targeted research requires at least one reviewed source.")
+            if not rationale:
+                raise SystemExit("Cannot complete research: targeted research requires rationale.")
+        if mode == "broad":
+            if len(sources) < 2:
+                raise SystemExit("Cannot complete research: broad research requires at least two reviewed sources.")
+            if not artifacts and not rationale:
+                raise SystemExit("Cannot complete research: broad research requires at least one artifact or evidence summary.")
+        gate["research_completed"] = True
+        gate["status"] = "complete"
+        gate["updated_at"] = utc_now()
+        save_manifest(mpath, manifest)
+        print(f"{mid}: research marked complete")
+        return 0
+
+    if args.research_command == "show":
+        print(json.dumps(gate, indent=2, ensure_ascii=False))
+        return 0
+
+    raise SystemExit(f"unsupported research subcommand: {args.research_command}")
+
+
 def cmd_phase(args):
     """Advance the active mission to a new phase with transition validation."""
     cwd = Path(args.cwd or ".").resolve()
@@ -719,7 +974,7 @@ def cmd_phase(args):
                 "tool_use_id": f"force:{ctx.mission_id}:{args.phase}",
             })
         with (mdir / "progress.md").open("a", encoding="utf-8", newline="\n") as fh:
-            fh.write(f"- {utc_now()} WARNING: --force used to bypass transition from {current} to {args.phase}\n")
+            fh.write(f"- {utc_now()} WARNING: --force used to bypass transition adjacency from {current} to {args.phase}; safety gates still enforced.\n")
 
     # Enforce legal phase transitions unless --force
     if not args.force:
@@ -729,6 +984,17 @@ def cmd_phase(args):
                 f"Cannot transition from '{current}' to '{args.phase}'. "
                 f"Allowed: {', '.join(sorted(allowed)) or '(none -- use close pass|abort)'}"
             )
+
+    if args.phase == "implement":
+        gate = get_research_gate(manifest)
+        if not gate.get("research_mode"):
+            raise SystemExit("Cannot transition to 'implement': research gate incomplete.")
+        buyoff_ok, buyoff_reason = plan_buyoff_is_satisfied(manifest)
+        if not buyoff_ok:
+            raise SystemExit(f"Cannot transition to 'implement': {buyoff_reason}")
+        ok, reason = research_is_satisfied(manifest)
+        if not ok:
+            raise SystemExit(f"Cannot transition to 'implement': {reason}")
 
     # Validate --skip-role values are valid audit roles
     _VALID_SKIP_ROLES = frozenset({"skeptic", "security", "performance", "accessibility"})
@@ -745,7 +1011,15 @@ def cmd_phase(args):
     # Enforce audit role gate: transitioning to verify requires all four
     # audit role results to exist or be explicitly skipped via --skip-role.
     _AUDIT_ROLES = ("security", "performance", "accessibility", "skeptic")
-    if args.phase == "verify" and not args.force:
+    if args.phase == "verify":
+        buyoff_ok, buyoff_reason = plan_buyoff_is_satisfied(manifest)
+        if not buyoff_ok:
+            raise SystemExit(f"Cannot transition to 'verify': {buyoff_reason}")
+        gate = get_research_gate(manifest)
+        if research_is_required(gate):
+            ok, reason = research_is_satisfied(manifest)
+            if not ok:
+                raise SystemExit(f"Cannot transition to 'verify': {reason}")
         skipped_roles = set(manifest.get("skipped_roles", []))
         results_dir = mdir / "results"
         missing: list[str] = []
@@ -1052,6 +1326,9 @@ def cmd_migrate(args):
         manifest.setdefault("planned_roles", list(ROLE_STATUS_ORDER))
         manifest.setdefault("skipped_roles", [])
         manifest.setdefault("fail_closed", False)
+        manifest.setdefault("research_gate", build_research_gate())
+        manifest.setdefault("buyoffs", [])
+        manifest.setdefault("evidence_sources", [])
         manifest["schema_version"] = 4
 
     save_manifest(mpath, manifest)
@@ -1250,6 +1527,23 @@ def build_parser():
     init.add_argument("--dry-run", action="store_true", help="Print the mission plan without creating files")
     init.add_argument("--awaiting-user", type=bool_arg, nargs="?", const=True, default=None)
     init.add_argument("--max-loops", type=int, default=3, help="Maximum implement loops (default: 3)")
+    init.add_argument("--domain")
+    init.add_argument("--action-type")
+    init.add_argument("--risk")
+    init.add_argument("--root-cause-clarity", type=int)
+    init.add_argument("--fix-path-clarity", type=int)
+    init.add_argument("--verification-clarity", type=int)
+    init.add_argument("--prior-pattern-match", type=int)
+    init.add_argument("--environmental-stability", type=int)
+    init.add_argument("--penalty-architecture", action="store_true", default=False)
+    init.add_argument("--penalty-security-data", action="store_true", default=False)
+    init.add_argument("--penalty-cross-module", action="store_true", default=False)
+    init.add_argument("--penalty-ecosystem-churn", action="store_true", default=False)
+    init.add_argument("--penalty-weak-observability", action="store_true", default=False)
+    init.add_argument("--research-rationale", default="")
+    init.add_argument("--source-reviewed", action="append", default=[])
+    init.add_argument("--research-artifact", action="append", default=[])
+    init.add_argument("--research-completed", action="store_true", default=False)
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=cmd_init)
 
@@ -1267,8 +1561,38 @@ def build_parser():
     phase.add_argument("phase", choices=ALL_PHASES)
     phase.add_argument("--awaiting-user", type=bool_arg, nargs="?", const=True, default=None)
     phase.add_argument("--skip-role", action="append", default=[], help="Skip an audit role when transitioning to verify")
-    phase.add_argument("--force", action="store_true", help="Bypass phase transition validation")
+    phase.add_argument("--force", action="store_true", help="Bypass phase adjacency validation, but not research/audit safety gates")
     phase.set_defaults(func=cmd_phase)
+
+    # buyoff
+    buyoff = sub.add_parser("buyoff", help="Record a structured mission buyoff")
+    buyoff.add_argument("phase", choices=ALL_PHASES)
+    buyoff.add_argument("--kind", default="manual")
+    buyoff.add_argument("--objective")
+    buyoff.add_argument("--recommendation")
+    buyoff.add_argument("--why", default="")
+    buyoff.add_argument("--source-reviewed", action="append", default=[])
+    buyoff.add_argument("--note", default="")
+    buyoff.set_defaults(func=cmd_buyoff)
+
+    # research
+    research = sub.add_parser("research", help="Manage research-gate evidence")
+    research_sub = research.add_subparsers(dest="research_command", required=True)
+    research_add_source = research_sub.add_parser("add-source", help="Add a reviewed research source")
+    research_add_source.add_argument("--title", required=True)
+    research_add_source.add_argument("--kind", required=True)
+    research_add_source.add_argument("--location", required=True)
+    research_add_source.add_argument("--notes", default="")
+    research_add_source.set_defaults(func=cmd_research)
+    research_add_artifact = research_sub.add_parser("add-artifact", help="Add a research artifact")
+    research_add_artifact.add_argument("--path", required=True)
+    research_add_artifact.add_argument("--kind", required=True)
+    research_add_artifact.add_argument("--notes", default="")
+    research_add_artifact.set_defaults(func=cmd_research)
+    research_complete = research_sub.add_parser("complete", help="Mark required research complete")
+    research_complete.set_defaults(func=cmd_research)
+    research_show = research_sub.add_parser("show", help="Show the current research gate")
+    research_show.set_defaults(func=cmd_research)
 
     # progress
     progress = sub.add_parser("progress", help="Append a progress message")
@@ -1339,5 +1663,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-

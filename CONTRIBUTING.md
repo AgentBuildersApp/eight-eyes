@@ -68,6 +68,17 @@ All hooks use a default-allow pattern so that a bug in the hook does not brick t
 
 When contributing a hook, wrap your enforcement logic in the error handler and add tests for both the success path and the error path.
 
+## Research Gate Changes
+
+If you touch `/collab` phase transitions, reviewer prompts, or implementer write enforcement, update the research-gate contract in one pass:
+
+- `scripts/collabctl.py` for Stage 0 classification, buyoffs, and phase gates
+- `hooks/scripts/collab_pre_tool.py` for runtime hard blocking
+- `hooks/scripts/core/roles.py` for context injection and result validation
+- `skills/collab/SKILL.md` as the policy source of truth
+
+Do not describe a research policy in docs that the runtime cannot actually enforce.
+
 ## Security Considerations
 
 - **Fail-closed mode**: When `manifest.fail_closed` is `true`, the `PreToolUse` hook denies on error instead of allowing. Use this for security-critical missions where a hook failure should halt work rather than permit unscoped access.
@@ -81,5 +92,4 @@ When contributing a hook, wrap your enforcement logic in the error handler and a
 - Tests come before advancement. If a phase cannot be verified, it does not pass.
 - Python stays 100% stdlib. Do not add pip dependencies.
 - Docs and metadata must describe the behavior that ships, not planned features.
-
 

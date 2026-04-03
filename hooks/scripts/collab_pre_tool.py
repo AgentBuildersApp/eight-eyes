@@ -120,6 +120,7 @@ def _main() -> int:
         path_is_in_test_paths,
         pretool_deny,
         print_json,
+        research_is_satisfied,
         role_from_agent_type,
     )
 
@@ -174,6 +175,15 @@ def _main() -> int:
                     "[COLLAB] Missing file path in write/edit tool input."
                 ))
                 return 0
+            if ctx.manifest.get("phase") == "implement":
+                research_ok, research_reason = research_is_satisfied(ctx.manifest)
+                if not research_ok:
+                    print_json(pretool_deny(
+                        "[COLLAB] Research gate not satisfied. "
+                        "Implementation is blocked until the plan-phase buyoff is recorded "
+                        f"and required research is completed. {research_reason}"
+                    ))
+                    return 0
             if (
                 ctx.manifest.get("tdd_mode")
                 and ctx.manifest.get("phase") == "implement"
@@ -349,6 +359,15 @@ def _main() -> int:
                 return 0
             scope_type = custom_role_scope_type(custom_role)
             write_paths = _custom_role_write_paths(custom_role, ctx.manifest)
+            if ctx.manifest.get("phase") == "implement":
+                research_ok, research_reason = research_is_satisfied(ctx.manifest)
+                if not research_ok:
+                    print_json(pretool_deny(
+                        "[COLLAB] Research gate not satisfied. "
+                        "Implementation is blocked until the plan-phase buyoff is recorded "
+                        f"and required research is completed. {research_reason}"
+                    ))
+                    return 0
             if scope_type == "write_test":
                 ok, reason = path_is_in_test_paths(
                     str(candidate), ctx.manifest, ctx.project_root,
@@ -412,4 +431,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
