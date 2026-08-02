@@ -43,6 +43,8 @@ continuity aids -- they keep state coherent but are not equivalent hard
 gates.
 
 Run `collabctl capabilities` for the full enforcement model.
+Use [docs/collab-golden-path.md](../../docs/collab-golden-path.md) as the
+canonical operator runbook for the lifecycle below.
 
 ---
 
@@ -224,6 +226,10 @@ collabctl progress "<message>"      # append progress note
 collabctl close pass                # mission succeeded
 collabctl close abort               # mission failed
 collabctl capabilities              # display enforcement contract
+collabctl run --json               # report next named roles and auto-advance if results exist
+collabctl run --watch --timeout-seconds 300 --json  # watch live mission results and loop automatically
+collabctl smoke --scenario clean-pass  # run one-pass synthetic lifecycle/state smoke
+collabctl smoke --scenario audit-loop  # run loopback synthetic lifecycle/state smoke
 collabctl buyoff plan ...           # record a structured plan/research-gate buyoff
 collabctl research add-source ...   # attach reviewed research evidence
 collabctl research add-artifact ... # attach a research artifact

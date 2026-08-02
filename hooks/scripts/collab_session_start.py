@@ -30,25 +30,16 @@ def _main() -> int:
     payload = json.loads(sys.stdin.read() or "{}")
     cwd = Path(payload.get("cwd") or ".").resolve()
 
-    import subprocess
+    from collab_common import (
+        format_manifest_slim,
+        hook_context,
+        load_active_context,
+        print_json,
+        state_root_for,
+    )
 
-    try:
-        git_common = subprocess.run(
-            ["git", "rev-parse", "--git-common-dir"],
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        state_dir = Path(git_common) / "claude-collab"
-        if not state_dir.is_absolute():
-            state_dir = (cwd / state_dir).resolve()
-        if not state_dir.exists():
-            return 0
-    except Exception:
+    if not state_root_for(cwd).exists():
         return 0
-
-    from collab_common import format_manifest_slim, hook_context, load_active_context, print_json
 
     ctx = load_active_context(cwd)
     if not ctx or ctx.manifest.get("status") != "active":
@@ -79,4 +70,3 @@ if __name__ == "__main__":
     except Exception as exc:
         _fail_open(exc)
         raise SystemExit(0)
-

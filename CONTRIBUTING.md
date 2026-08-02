@@ -79,6 +79,22 @@ If you touch `/collab` phase transitions, reviewer prompts, or implementer write
 
 Do not describe a research policy in docs that the runtime cannot actually enforce.
 
+Operational runbook:
+
+- [docs/collab-golden-path.md](docs/collab-golden-path.md)
+
+If you change lifecycle orchestration or status/report surfaces, also run:
+
+```bash
+python3 scripts/collabctl.py smoke --scenario clean-pass
+python3 scripts/collabctl.py smoke --scenario audit-loop
+python3 scripts/collabctl.py run --json
+```
+
+Treat `smoke` as deterministic lifecycle validation, not as proof of live
+subagent or hook-enforcement behavior.
+Treat `run` as the live mission controller for real role results and loopback.
+
 ## Security Considerations
 
 - **Fail-closed mode**: When `manifest.fail_closed` is `true`, the `PreToolUse` hook denies on error instead of allowing. Use this for security-critical missions where a hook failure should halt work rather than permit unscoped access.
@@ -92,4 +108,3 @@ Do not describe a research policy in docs that the runtime cannot actually enfor
 - Tests come before advancement. If a phase cannot be verified, it does not pass.
 - Python stays 100% stdlib. Do not add pip dependencies.
 - Docs and metadata must describe the behavior that ships, not planned features.
-

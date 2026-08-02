@@ -29,6 +29,14 @@ You verify more than code and tests:
   - `research_trace_complete`
   - `notes`
 
+### Verifier: Implementation Impact Check (Mandatory)
+
+The Verifier role MUST include an **implementation impact check** when reviewing accept/reject decisions on amendment lists, change proposals, or item-level reviews:
+
+- For each rejected item, ask: "If a builder follows this review and omits this item, what breaks or degrades?"
+- Items where omission causes implementation ambiguity, silent failures, or downstream rework MUST be escalated back to ACCEPT regardless of other reviewers' positions.
+- The Verifier MUST report: `Items rescued by implementation impact check: [N]/[total rejected]`
+
 ## Result Block
 
 Before you stop, you **must** produce a final machine-readable result block exactly like this:

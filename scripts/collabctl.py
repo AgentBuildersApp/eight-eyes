@@ -11,6 +11,7 @@ Commands:
     show        Display active mission state (JSON)
     status      Display active mission progress (text)
     phase       Advance to a phase
+    run         Live mission controller
     progress    Append a progress message
     close       Close mission as pass or abort
     ledger-trim Trim ledger to N most recent entries
@@ -22,10 +23,15 @@ Commands:
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
+import io
 import json
+import os
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 # Resolve to hooks/scripts/ for collab_common imports
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -49,12 +55,16 @@ from collab_common import (  # noqa: E402
     research_is_satisfied,
     RESEARCH_FACTOR_KEYS,
     RESEARCH_PENALTY_WEIGHTS,
+    resolve_project_root,
     resolve_git_common_dir,
     resolve_worktree_root,
+    save_role_result,
     spec_hash,
+    state_root_for,
     utc_now,
     validate_custom_role_name,
 )
+from core.roles import validate_role_result  # noqa: E402
 
 SCHEMA_VERSION = 4
 
@@ -105,10 +115,100 @@ ROLE_STATUS_ORDER = [
     "docs",
 ]
 FAILED_ROLE_OUTCOMES = {"abort", "blocked", "fail", "failed", "needs_changes"}
+SCOPE_EXCLUDED_PREFIXES = (
+    ".claude/",
+    ".codex/collab-state/",
+    ".git/",
+    ".github/",
+    ".internal/",
+    "node_modules/",
+)
+NON_GIT_BASELINE_MAX_FILES = 20_000
+PHASE_ROLE_REQUIREMENTS = {
+    "implement": ("implementer",),
+    "test": ("test-writer",),
+    "audit": ("skeptic", "security", "performance", "accessibility"),
+    "review": ("implementer", "skeptic"),
+    "security": ("security",),
+    "performance": ("performance",),
+    "accessibility": ("accessibility",),
+    "verify": ("verifier",),
+    "docs": ("docs",),
+}
 
 
 def state_root(cwd: Path) -> Path:
-    return resolve_git_common_dir(cwd) / "claude-collab"
+    return state_root_for(cwd)
+
+
+def _scope_roots(manifest: dict) -> set[str]:
+    """Return normalized allowed/test/doc roots for close-time scope checks."""
+    allowed: set[str] = set()
+    for key in ("allowed_paths", "test_paths", "doc_paths"):
+        for path in manifest.get(key, []):
+            item = str(path).strip().rstrip("/")
+            if item:
+                allowed.add(item)
+    return allowed
+
+
+def _scope_excluded(rel_path: str) -> bool:
+    """Return True for paths that should never count as scope drift."""
+    return any(rel_path.startswith(prefix) for prefix in SCOPE_EXCLUDED_PREFIXES)
+
+
+def _scope_allowed(rel_path: str, allowed: set[str]) -> bool:
+    """Return True when rel_path is covered by allowed roots."""
+    return not allowed or any(rel_path == root or rel_path.startswith(f"{root}/") for root in allowed)
+
+
+def _capture_non_git_baseline(project_root: Path, max_files: int = NON_GIT_BASELINE_MAX_FILES) -> dict:
+    """Capture a bounded non-git file baseline for close-time scope checks."""
+    files: dict[str, dict[str, int]] = {}
+    try:
+        for dirpath, dirnames, filenames in os.walk(project_root):
+            current_dir = Path(dirpath)
+            rel_dir = current_dir.relative_to(project_root).as_posix()
+            if rel_dir == ".":
+                rel_dir = ""
+            dirnames[:] = [
+                dirname for dirname in dirnames
+                if not _scope_excluded(f"{rel_dir}/{dirname}/".lstrip("/"))
+            ]
+            for filename in filenames:
+                path = current_dir / filename
+                rel_path = path.relative_to(project_root).as_posix()
+                if _scope_excluded(rel_path):
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if not path.is_file():
+                    continue
+                files[rel_path] = {"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)}
+                if len(files) > max_files:
+                    return {
+                        "type": "non_git",
+                        "status": "unavailable",
+                        "reason": f"file count exceeded {max_files}",
+                        "file_count": len(files),
+                        "files": {},
+                    }
+    except OSError as exc:
+        return {
+            "type": "non_git",
+            "status": "unavailable",
+            "reason": str(exc),
+            "file_count": len(files),
+            "files": {},
+        }
+    return {
+        "type": "non_git",
+        "status": "captured",
+        "file_count": len(files),
+        "files": files,
+    }
 
 
 def save_manifest(path: Path, manifest: dict) -> None:
@@ -388,6 +488,214 @@ def _role_names_for_status(manifest: dict) -> list[str]:
     return roles
 
 
+def _required_roles_for_phase(manifest: dict, phase: str | None = None) -> list[str]:
+    """Return the roles required to complete a given phase."""
+    selected_phase = phase or str(manifest.get("phase") or "")
+    roles = list(PHASE_ROLE_REQUIREMENTS.get(selected_phase, ()))
+    if selected_phase == "audit":
+        skipped = set(manifest.get("skipped_roles", []))
+        roles = [role for role in roles if role not in skipped]
+    return roles
+
+
+def _agent_name_for_role(role: str) -> str:
+    """Return the named agent handle expected by /8eyes orchestration."""
+    return f"collab-{role}"
+
+
+def _controller_transition(cwd: Path, phase: str) -> None:
+    """Advance the active mission phase using normal transition validation."""
+    sink = io.StringIO()
+    with redirect_stdout(sink):
+        cmd_phase(SimpleNamespace(
+            cwd=str(cwd),
+            phase=phase,
+            awaiting_user=False,
+            skip_role=[],
+            force=False,
+        ))
+
+
+def _controller_close(cwd: Path, outcome: str, reason: str) -> None:
+    """Close the active mission using the standard close path."""
+    sink = io.StringIO()
+    with redirect_stdout(sink):
+        cmd_close(SimpleNamespace(
+            cwd=str(cwd),
+            outcome=outcome,
+            reason=reason,
+            force_close=None,
+        ))
+
+
+def _controller_next_success_phase(manifest: dict, phase: str) -> str | None:
+    """Return the next phase after a successful role completion."""
+    if phase == "implement":
+        return "test"
+    if phase == "test":
+        return "audit"
+    if phase == "audit":
+        return "verify"
+    if phase == "review":
+        return "security"
+    if phase == "security":
+        return "performance"
+    if phase == "performance":
+        return "accessibility"
+    if phase == "accessibility":
+        return "verify"
+    if phase == "verify":
+        planned = manifest.get("planned_roles", [])
+        return "docs" if "docs" in planned else None
+    return None
+
+
+def _controller_waiting_payload(
+    ctx,
+    phase: str,
+    pending_roles: list[str],
+    history: list[dict[str, object]],
+    reason: str | None = None,
+) -> dict[str, object]:
+    """Build a machine-readable waiting payload for the live controller."""
+    return {
+        "state": "waiting",
+        "mission_id": ctx.mission_id,
+        "phase": phase,
+        "pending_roles": pending_roles,
+        "dispatch_roles": [
+            {"role": role, "agent_type": _agent_name_for_role(role)}
+            for role in pending_roles
+        ],
+        "history": history,
+        "reason": reason or "Awaiting validated role results for the current phase.",
+    }
+
+
+def _controller_step(cwd: Path, history: list[dict[str, object]]) -> dict[str, object]:
+    """Drive the active mission forward until it needs more role results."""
+    ctx = load_active_context(cwd)
+    if not ctx or not is_active_manifest(ctx.manifest):
+        return {
+            "state": "closed",
+            "mission_id": None,
+            "phase": None,
+            "history": history,
+            "reason": "No active /collab mission.",
+        }
+
+    manifest = ctx.manifest
+    phase = str(manifest.get("phase") or "")
+    required_roles = _required_roles_for_phase(manifest, phase)
+
+    if phase == "plan":
+        return {
+            "state": "waiting_for_user",
+            "mission_id": ctx.mission_id,
+            "phase": phase,
+            "pending_roles": [],
+            "dispatch_roles": [],
+            "history": history,
+            "reason": "Plan phase still requires explicit user approval before implementation begins.",
+        }
+
+    if phase in {"pass", "abort"}:
+        return {
+            "state": "closed",
+            "mission_id": ctx.mission_id,
+            "phase": phase,
+            "history": history,
+            "reason": f"Mission already closed as {phase}.",
+        }
+
+    pending_roles: list[str] = []
+    failed_roles: list[dict[str, str]] = []
+    for role in required_roles:
+        result = load_role_result(ctx, role)
+        if not result:
+            pending_roles.append(role)
+            continue
+        outcome = _result_outcome(result).lower()
+        if outcome in FAILED_ROLE_OUTCOMES:
+            failed_roles.append({"role": role, "outcome": outcome or "failed"})
+
+    if pending_roles:
+        return _controller_waiting_payload(ctx, phase, pending_roles, history)
+
+    if failed_roles:
+        if phase in {"audit", "review", "security", "performance", "accessibility", "verify"}:
+            _controller_transition(cwd, "implement")
+            history.append({
+                "action": "loopback",
+                "from_phase": phase,
+                "to_phase": "implement",
+                "failed_roles": failed_roles,
+            })
+            refreshed = load_active_context(cwd)
+            return _controller_waiting_payload(
+                refreshed,
+                "implement",
+                _required_roles_for_phase(refreshed.manifest, "implement"),
+                history,
+                reason="Looped back to implement because a review-phase role requested changes.",
+            )
+        return {
+            "state": "blocked",
+            "mission_id": ctx.mission_id,
+            "phase": phase,
+            "failed_roles": failed_roles,
+            "history": history,
+            "reason": "Current phase has a blocking role result and cannot auto-advance.",
+        }
+
+    if phase == "docs":
+        docs_result = load_role_result(ctx, "docs") or {}
+        if str(docs_result.get("status") or "").lower() == "blocked":
+            return {
+                "state": "blocked",
+                "mission_id": ctx.mission_id,
+                "phase": phase,
+                "history": history,
+                "reason": "Docs role reported blocked and requires manual intervention.",
+            }
+        _controller_close(cwd, "pass", "Live controller closed mission after docs completed.")
+        history.append({"action": "close", "outcome": "pass", "from_phase": phase})
+        return {
+            "state": "closed",
+            "mission_id": ctx.mission_id,
+            "phase": "pass",
+            "history": history,
+            "reason": "Mission closed as pass after docs completed.",
+        }
+
+    next_phase = _controller_next_success_phase(manifest, phase)
+    if next_phase is None:
+        _controller_close(cwd, "pass", "Live controller closed mission after all configured phases completed.")
+        history.append({"action": "close", "outcome": "pass", "from_phase": phase})
+        return {
+            "state": "closed",
+            "mission_id": ctx.mission_id,
+            "phase": "pass",
+            "history": history,
+            "reason": "Mission closed as pass after all configured phases completed.",
+        }
+
+    _controller_transition(cwd, next_phase)
+    history.append({
+        "action": "advance",
+        "from_phase": phase,
+        "to_phase": next_phase,
+    })
+    refreshed = load_active_context(cwd)
+    return _controller_waiting_payload(
+        refreshed,
+        next_phase,
+        _required_roles_for_phase(refreshed.manifest, next_phase),
+        history,
+        reason=f"Advanced to {next_phase}; dispatch the listed role(s) to continue.",
+    )
+
+
 def _source_record_from_cli(raw: str) -> dict[str, str]:
     """Normalize a simple source string into a structured source record."""
     text = str(raw or "").strip()
@@ -487,7 +795,7 @@ def build_research_gate_from_args(args, previous_failure: bool = False) -> dict:
 def cmd_init(args):
     """Create a new /collab mission with the given objective and scope."""
     cwd = Path(args.cwd or ".").resolve()
-    project_root = resolve_worktree_root(cwd)
+    project_root = resolve_project_root(cwd)
     sroot = state_root(cwd)
     ap = active_pointer_path(sroot)
     active = load_json(ap, default=None)
@@ -559,6 +867,8 @@ def cmd_init(args):
         cwd=str(project_root), capture_output=True, text=True, check=False,
     )
     manifest["git_baseline"] = baseline_proc.stdout if baseline_proc.returncode == 0 else ""
+    if baseline_proc.returncode != 0:
+        manifest["non_git_baseline"] = _capture_non_git_baseline(project_root)
 
     if args.dry_run:
         print(json.dumps({
@@ -1078,6 +1388,62 @@ def cmd_progress(args):
     return 0
 
 
+def cmd_run(args):
+    """Converge an active mission by auto-advancing phases as results arrive."""
+    cwd = Path(args.cwd or ".").resolve()
+    history: list[dict[str, object]] = []
+    deadline = None
+    if getattr(args, "timeout_seconds", 0):
+        deadline = time.monotonic() + float(args.timeout_seconds)
+
+    while True:
+        payload = _controller_step(cwd, history)
+        state = str(payload.get("state") or "")
+
+        if state == "closed":
+            if getattr(args, "json_output", False):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(payload.get("reason", "Mission closed."))
+            return 0
+
+        if state in {"blocked", "waiting_for_user"}:
+            if getattr(args, "json_output", False):
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+            else:
+                print(payload.get("reason", "Mission cannot auto-advance."))
+            return 0
+
+        if state == "waiting":
+            if not getattr(args, "watch", False):
+                if getattr(args, "json_output", False):
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    dispatch = ", ".join(
+                        f"{item['agent_type']} ({item['role']})"
+                        for item in payload.get("dispatch_roles", [])
+                    )
+                    print(f"Phase: {payload.get('phase')}")
+                    print(f"Pending roles: {', '.join(payload.get('pending_roles', [])) or '(none)'}")
+                    print(f"Dispatch next: {dispatch or '(none)'}")
+                    print(payload.get("reason", "Awaiting results."))
+                return 0
+            if deadline is not None and time.monotonic() >= deadline:
+                payload["timed_out"] = True
+                payload["reason"] = (
+                    f"Timed out while waiting for {', '.join(payload.get('pending_roles', [])) or 'phase results'}."
+                )
+                if getattr(args, "json_output", False):
+                    print(json.dumps(payload, indent=2, ensure_ascii=False))
+                else:
+                    print(payload["reason"])
+                return 0
+            time.sleep(float(getattr(args, "poll_interval", 1.0) or 1.0))
+            continue
+
+        raise SystemExit(f"unsupported controller state: {state}")
+
+
 def _verify_close_scope(manifest: dict, project_root: Path) -> list[str]:
     """Check git diff against allowed_paths for scope violations."""
     import subprocess as _sp
@@ -1086,7 +1452,7 @@ def _verify_close_scope(manifest: dict, project_root: Path) -> list[str]:
         cwd=str(project_root), capture_output=True, text=True, check=False,
     )
     if proc.returncode != 0:
-        return []
+        return _verify_non_git_close_scope(manifest, project_root)
     status_proc = _sp.run(
         ["git", "status", "--porcelain", "-z"],
         cwd=str(project_root), capture_output=True, text=True, check=False,
@@ -1098,27 +1464,49 @@ def _verify_close_scope(manifest: dict, project_root: Path) -> list[str]:
             if entry and entry[:2].strip() == "??":
                 changed_files.append(entry[3:].strip())
 
-    allowed: set[str] = set()
-    for p in manifest.get("allowed_paths", []):
-        allowed.add(p.rstrip("/"))
-    for p in manifest.get("test_paths", []):
-        allowed.add(p.rstrip("/"))
-    for p in manifest.get("doc_paths", []):
-        allowed.add(p.rstrip("/"))
-
+    allowed = _scope_roots(manifest)
     if not allowed:
         return []
 
-    # Paths that are never scope violations (plugin internals, git state)
-    _EXCLUDED_PREFIXES = (".claude/", ".git/", ".github/", "node_modules/", ".internal/")
-
     violations = []
     for f in changed_files:
-        if any(f.startswith(ex) for ex in _EXCLUDED_PREFIXES):
+        if _scope_excluded(f):
             continue
-        if not any(f.startswith(a) or f == a for a in allowed):
+        if not _scope_allowed(f, allowed):
             violations.append(f)
     return violations
+
+
+def _verify_non_git_close_scope(manifest: dict, project_root: Path) -> list[str]:
+    """Compare a bounded non-git baseline against current file metadata."""
+    allowed = _scope_roots(manifest)
+    if not allowed:
+        return []
+
+    baseline = manifest.get("non_git_baseline") or {}
+    if baseline.get("status") != "captured":
+        reason = baseline.get("reason", "baseline missing")
+        return [f"<non-git scope verification unavailable: {reason}>"]
+
+    current = _capture_non_git_baseline(project_root)
+    if current.get("status") != "captured":
+        reason = current.get("reason", "current snapshot unavailable")
+        return [f"<non-git scope verification unavailable: {reason}>"]
+
+    baseline_files = baseline.get("files", {})
+    current_files = current.get("files", {})
+    changed: set[str] = set()
+    for rel_path, meta in current_files.items():
+        if rel_path not in baseline_files or baseline_files[rel_path] != meta:
+            changed.add(rel_path)
+    for rel_path in baseline_files:
+        if rel_path not in current_files:
+            changed.add(rel_path)
+
+    return [
+        rel_path for rel_path in sorted(changed)
+        if not _scope_excluded(rel_path) and not _scope_allowed(rel_path, allowed)
+    ]
 
 
 def cmd_close(args):
@@ -1212,6 +1600,7 @@ def cmd_verify(args):
         (root / ".claude-plugin" / "plugin.json", "Plugin manifest"),
         (root / "hooks" / "hooks.json", "Hook wiring"),
         (root / "skills" / "collab" / "SKILL.md", "Coordinator skill"),
+        (root / "docs" / "collab-golden-path.md", "Canonical operator runbook"),
         (root / "scripts" / "collabctl.py", "CLI tool"),
         (root / "commands" / "8eyes.md", "Claude /8eyes command"),
         (root / "adapters" / "copilot_cli" / "plugin.json", "Copilot adapter manifest"),
@@ -1271,9 +1660,10 @@ def cmd_verify(args):
         print("  [OK] Git repository detected")
     except Exception:
         if install_only:
-            print("  [WARN] Not in a git repo -- mission features require a git repository. All files verified OK.")
+            print("  [WARN] Not in a git repo -- install files verified; mission state will use Codex non-git state.")
         else:
-            errors.append("Not in a git repository (required for mission state)")
+            state_root = state_root_for(cwd)
+            print(f"  [OK] Non-git mission state root: {state_root}")
 
     if errors:
         print(f"\nVERIFY FAILED: {len(errors)} error(s)")
@@ -1400,6 +1790,13 @@ def cmd_report(args):
         print("No active /collab mission. Run 'collabctl init --objective \"...\"' to start one.")
         return 0
 
+    print(_build_report_text(ctx))
+    return 0
+
+
+def _build_report_text(ctx) -> str:
+    """Build a consolidated mission report with verdict and findings."""
+
     manifest = ctx.manifest
     lines: list[str] = []
     lines.append(f"# Mission Report: {ctx.mission_id}")
@@ -1485,8 +1882,282 @@ def cmd_report(args):
             lines.append(f"  - {hook} crashed at {ts}: {error}")
         lines.append("  Run 'collabctl show' for full details.")
 
-    print("\n".join(lines))
+    return "\n".join(lines)
+
+
+def _smoke_role_result(role: str, scenario: str, round_index: int, criteria: list[str]) -> dict:
+    """Return a deterministic role result fixture for smoke missions."""
+    if role == "implementer":
+        return {
+            "role": "implementer",
+            "status": "complete",
+            "summary": (
+                "Validated the committed orchestration surfaces and mission-state transitions."
+                if round_index == 1
+                else "Revalidated the orchestration flow after an audit-requested loopback."
+            ),
+            "changed_paths": [],
+            "artifacts": [
+                "No code mutation required; smoke runner validates mission lifecycle and result persistence."
+            ],
+            "tests_run": [],
+        }
+    if role == "test-writer":
+        return {
+            "role": "test-writer",
+            "status": "complete",
+            "summary": "Confirmed the committed regression coverage exists for the orchestration surfaces and that the synthetic smoke mission itself does not execute additional tests.",
+            "test_files_created": ["tests/test_collab_hooks.py"],
+            "coverage_targets": [
+                "scripts/collabctl.py",
+                "hooks/scripts/core/engine.py",
+                "hooks/scripts/collab_pre_tool.py",
+                "hooks/scripts/core/roles.py",
+            ],
+            "test_count": 0,
+            "edge_cases_covered": [
+                "skip/targeted/broad research modes",
+                "phase-gate enforcement",
+                "custom role write enforcement",
+                "force-transition hardening",
+            ],
+        }
+    if role == "skeptic":
+        if scenario == "audit-loop" and round_index == 1:
+            return {
+                "role": "skeptic",
+                "summary": "The first audit round intentionally requests one loopback to prove downstream rerun behavior.",
+                "recommendation": "needs_changes",
+                "findings": [
+                    {
+                        "severity": "medium",
+                        "issue": "Loopback smoke scenario intentionally requests one re-run before final approval.",
+                        "path": "scripts/collabctl.py",
+                        "line": 1,
+                        "evidence": "Synthetic smoke fixture for audit-loop scenario.",
+                    }
+                ],
+                "research_gate_assessment": {
+                    "confidence_overstated": False,
+                    "research_skip_incorrect": False,
+                    "notes": "The loopback is intentional and not caused by a research-gate failure.",
+                },
+            }
+        return {
+            "role": "skeptic",
+            "summary": "Synthetic smoke mission found no internal inconsistency in the committed orchestration state flow or generated reporting surfaces.",
+            "recommendation": "approve",
+            "findings": [],
+            "research_gate_assessment": {
+                "confidence_overstated": False,
+                "research_skip_incorrect": False,
+                "notes": "The synthetic smoke mission validates deterministic mission-state flow and reporting only; live subagent and hook enforcement require separate audit coverage.",
+            },
+        }
+    if role == "security":
+        return {
+            "role": "security",
+            "summary": "Synthetic smoke mission confirms the committed mission-state orchestration path remains coherent on the clean tree without claiming live security-command execution.",
+            "recommendation": "approve",
+            "findings": [],
+            "scan_commands_run": [],
+            "research_gate_assessment": {
+                "risk_classification_correct": True,
+                "required_research_missing": False,
+                "notes": "This synthetic mission does not execute live subagents or hooks; it validates deterministic lifecycle state and fixture persistence only.",
+            },
+        }
+    if role == "performance":
+        return {
+            "role": "performance",
+            "summary": "Synthetic smoke mission found no material runtime overhead in the committed orchestration surfaces and does not claim benchmark execution.",
+            "recommendation": "approve",
+            "findings": [],
+            "benchmarks_run": [],
+        }
+    if role == "accessibility":
+        return {
+            "role": "accessibility",
+            "summary": "Synthetic smoke mission confirms the runbook and status surfaces remain clear and usable on the committed tree without claiming separate accessibility-command execution.",
+            "recommendation": "approve",
+            "findings": [],
+            "a11y_commands_run": [],
+        }
+    if role == "verifier":
+        return {
+            "role": "verifier",
+            "summary": "Synthetic smoke mission passed all configured orchestration criteria on the committed tree.",
+            "recommendation": "pass",
+            "criteria_results": [
+                {
+                    "criterion": criterion,
+                    "status": "pass",
+                    "evidence": ["Synthetic smoke runner advanced the mission through the required lifecycle and recorded a passing outcome."]
+                }
+                for criterion in criteria
+            ],
+            "research_trace": {
+                "sources_influenced_design": True,
+                "research_trace_complete": True,
+                "notes": "The synthetic smoke mission preserved the plan buyoff and research gate in mission state throughout the lifecycle.",
+            },
+        }
+    if role == "docs":
+        return {
+            "role": "docs",
+            "status": "complete",
+            "summary": "Smoke mission confirms the canonical runbook and supporting docs are present on the committed tree.",
+            "docs_updated": ["README.md", "CONTRIBUTING.md", "skills/collab/SKILL.md"],
+            "docs_created": ["docs/collab-golden-path.md", "docs/research-gate.md"],
+        }
+    raise SystemExit(f"unsupported smoke role: {role}")
+
+
+def cmd_smoke(args):
+    """Run a deterministic synthetic mission lifecycle for orchestration validation."""
+    cwd = Path(args.cwd or ".").resolve()
+    if load_active(cwd):
+        raise SystemExit("Cannot run smoke mission while another /collab mission is active.")
+
+    scenario = args.scenario
+    objective = f"Smoke mission ({scenario}) for committed /collab orchestration"
+    init_args = argparse.Namespace(
+        cwd=str(cwd),
+        force=False,
+        objective=objective,
+        objective_file=None,
+        spec_path=None,
+        allowed_path=["scripts", "hooks", "skills", "agents", "tests", "docs", "README.md", "CONTRIBUTING.md"],
+        denied_path=None,
+        test_path=None,
+        doc_path=None,
+        criterion=[
+            "Mission lifecycle completes cleanly.",
+            "Audit roles persist structured results.",
+            "Verifier passes with structured criteria evidence.",
+        ],
+        criteria_file=None,
+        verify_command=["python3 -m pytest -q"],
+        security_command=[],
+        benchmark_command=[],
+        a11y_command=[],
+        custom_role=[],
+        tdd=False,
+        timeout_hours=24,
+        model_map=None,
+        default_model="claude",
+        fail_closed=False,
+        dry_run=False,
+        awaiting_user=False,
+        max_loops=3,
+        domain="platform",
+        action_type="fix",
+        risk="low",
+        root_cause_clarity=2,
+        fix_path_clarity=2,
+        verification_clarity=2,
+        prior_pattern_match=2,
+        environmental_stability=2,
+        penalty_architecture=False,
+        penalty_security_data=False,
+        penalty_cross_module=False,
+        penalty_ecosystem_churn=False,
+        penalty_weak_observability=False,
+        research_rationale="Committed-tree smoke verification of the collab lifecycle.",
+        source_reviewed=[],
+        research_artifact=[],
+        research_completed=False,
+    )
+    sink = io.StringIO()
+    with redirect_stdout(sink):
+        cmd_init(init_args)
+
+    loaded = load_active(cwd)
+    if not loaded:
+        raise SystemExit("Smoke mission failed to initialize.")
+    _, mid, mdir, _, manifest = loaded
+    criteria = list(manifest.get("acceptance_criteria", []))
+
+    buyoff_args = argparse.Namespace(
+        cwd=str(cwd),
+        phase="plan",
+        kind="manual",
+        objective=objective,
+        recommendation="approve",
+        why="Smoke mission verifies the committed lifecycle on a clean tree.",
+        source_reviewed=[],
+        note="Generated by collabctl smoke.",
+    )
+    with redirect_stdout(sink):
+        cmd_buyoff(buyoff_args)
+
+    round_index = 1
+    with redirect_stdout(sink):
+        cmd_phase(argparse.Namespace(cwd=str(cwd), phase="implement", awaiting_user=False, skip_role=[], force=False))
+    ctx = load_active_context(cwd)
+    _save_smoke_result(ctx, "implementer", _smoke_role_result("implementer", scenario, round_index, criteria))
+
+    with redirect_stdout(sink):
+        cmd_phase(argparse.Namespace(cwd=str(cwd), phase="test", awaiting_user=False, skip_role=[], force=False))
+    ctx = load_active_context(cwd)
+    _save_smoke_result(ctx, "test-writer", _smoke_role_result("test-writer", scenario, round_index, criteria))
+
+    while True:
+        with redirect_stdout(sink):
+            cmd_phase(argparse.Namespace(cwd=str(cwd), phase="audit", awaiting_user=False, skip_role=[], force=False))
+        ctx = load_active_context(cwd)
+        audit_roles = ("skeptic", "security", "performance", "accessibility")
+        for role in audit_roles:
+            _save_smoke_result(ctx, role, _smoke_role_result(role, scenario, round_index, criteria))
+
+        results = [load_role_result(ctx, role) for role in audit_roles]
+        if any((result or {}).get("recommendation") in FAILED_ROLE_OUTCOMES for result in results):
+            round_index += 1
+            with redirect_stdout(sink):
+                cmd_phase(argparse.Namespace(cwd=str(cwd), phase="implement", awaiting_user=False, skip_role=[], force=False))
+            ctx = load_active_context(cwd)
+            _save_smoke_result(ctx, "implementer", _smoke_role_result("implementer", scenario, round_index, criteria))
+            with redirect_stdout(sink):
+                cmd_phase(argparse.Namespace(cwd=str(cwd), phase="test", awaiting_user=False, skip_role=[], force=False))
+            ctx = load_active_context(cwd)
+            _save_smoke_result(ctx, "test-writer", _smoke_role_result("test-writer", scenario, round_index, criteria))
+            continue
+        break
+
+    with redirect_stdout(sink):
+        cmd_phase(argparse.Namespace(cwd=str(cwd), phase="verify", awaiting_user=False, skip_role=[], force=False))
+    ctx = load_active_context(cwd)
+    _save_smoke_result(ctx, "verifier", _smoke_role_result("verifier", scenario, round_index, criteria))
+
+    with redirect_stdout(sink):
+        cmd_phase(argparse.Namespace(cwd=str(cwd), phase="docs", awaiting_user=False, skip_role=[], force=False))
+    ctx = load_active_context(cwd)
+    _save_smoke_result(ctx, "docs", _smoke_role_result("docs", scenario, round_index, criteria))
+
+    with redirect_stdout(sink):
+        cmd_close(argparse.Namespace(cwd=str(cwd), outcome="pass", reason=f"Smoke mission {scenario} completed successfully.", force_close=None))
+    closed_manifest = load_json(mdir / "manifest.json", default={}) or {}
+    closed_ctx = SimpleNamespace(mission_id=mid, mission_dir=mdir, manifest=closed_manifest)
+    report_text = _build_report_text(closed_ctx)
+    report_path = mdir / "summary.md"
+    report_path.write_text(report_text + "\n", encoding="utf-8")
+    payload = {
+        "mission_id": mid,
+        "scenario": scenario,
+        "report_path": str(report_path),
+        "loop_count": round_index - 1,
+        "status": "pass",
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
+
+
+def _save_smoke_result(ctx, role: str, result: dict) -> None:
+    """Validate and save a deterministic smoke result."""
+    ok, reason = validate_role_result(role, result, ctx.manifest)
+    if not ok:
+        raise SystemExit(f"invalid smoke result for {role}: {reason}")
+    save_role_result(ctx, role, result)
 
 
 # ── Argument Parser ──
@@ -1619,6 +2290,19 @@ def build_parser():
     # report
     report = sub.add_parser("report", help="Produce consolidated mission report")
     report.set_defaults(func=cmd_report)
+
+    # run
+    run = sub.add_parser("run", help="Live mission controller: advance phases and wait for role results")
+    run.add_argument("--watch", action="store_true", help="Poll until new results arrive, the mission closes, or timeout is reached")
+    run.add_argument("--timeout-seconds", type=float, default=0.0, help="Stop waiting after N seconds when --watch is used")
+    run.add_argument("--poll-interval", type=float, default=1.0, help="Polling interval in seconds for --watch")
+    run.add_argument("--json", dest="json_output", action="store_true", help="Machine-readable JSON output")
+    run.set_defaults(func=cmd_run)
+
+    # smoke
+    smoke = sub.add_parser("smoke", help="Run a deterministic end-to-end mission smoke scenario")
+    smoke.add_argument("--scenario", choices=["clean-pass", "audit-loop"], default="clean-pass")
+    smoke.set_defaults(func=cmd_smoke)
 
     # migrate
     migrate = sub.add_parser("migrate", help="Migrate mission state to the latest schema")

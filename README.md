@@ -289,6 +289,24 @@ python3 scripts/collabctl.py buyoff plan --recommendation approve_with_research
 python3 scripts/collabctl.py phase implement --awaiting-user false
 ```
 
+Canonical operator runbook:
+
+- [docs/collab-golden-path.md](docs/collab-golden-path.md)
+
+One-command deterministic orchestration smoke validation:
+
+```bash
+python3 scripts/collabctl.py smoke --scenario clean-pass
+python3 scripts/collabctl.py smoke --scenario audit-loop
+```
+
+Live mission controller for real `/8eyes` role execution:
+
+```bash
+python3 scripts/collabctl.py run --json
+python3 scripts/collabctl.py run --watch --timeout-seconds 300 --json
+```
+
 ### Blind Review
 
 The skeptic sees the objective, acceptance criteria, and changed paths — but **not** the implementer's narrative or summary. This is enforced by context shaping at the hook level. The skeptic forms an independent opinion because it does not have the implementer's framing in its context window.

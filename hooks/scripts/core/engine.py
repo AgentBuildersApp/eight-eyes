@@ -119,6 +119,14 @@ def resolve_worktree_root(cwd: Path) -> Path:
     return Path(repo_git(["rev-parse", "--show-toplevel"], cwd)).resolve()
 
 
+def resolve_project_root(cwd: Path) -> Path:
+    """Return the git worktree root, or cwd for non-git audits."""
+    try:
+        return resolve_worktree_root(cwd)
+    except CollabError:
+        return cwd.resolve()
+
+
 def resolve_git_common_dir(cwd: Path) -> Path:
     """Return the absolute git common directory for cwd."""
     out = repo_git(["rev-parse", "--git-common-dir"], cwd)
@@ -128,9 +136,27 @@ def resolve_git_common_dir(cwd: Path) -> Path:
     return path
 
 
+def _non_git_state_root(project_root: Path) -> Path:
+    """Return a stable Codex-owned state root for a non-git project root."""
+    codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+    slug = "".join(ch if ch.isalnum() else "-" for ch in project_root.name.lower()).strip("-")
+    if not slug:
+        slug = "root"
+    digest = hashlib.sha256(str(project_root).encode("utf-8")).hexdigest()[:16]
+    return codex_home / "collab-state" / "non-git" / f"{slug}-{digest}" / SHARED_STATE_DIRNAME
+
+
+def collab_state_root_for(cwd: Path) -> Path:
+    """Return the shared collab state directory for git or non-git cwd."""
+    try:
+        return resolve_git_common_dir(cwd) / SHARED_STATE_DIRNAME
+    except CollabError:
+        return _non_git_state_root(resolve_project_root(cwd))
+
+
 def state_root_for(cwd: Path) -> Path:
     """Return the shared collab state directory for cwd."""
-    return resolve_git_common_dir(cwd) / SHARED_STATE_DIRNAME
+    return collab_state_root_for(cwd)
 
 
 def active_pointer_path(state_root: Path) -> Path:
@@ -224,12 +250,13 @@ def file_lock(lock_path: Path) -> Iterator[None]:
 
 def load_active_context(cwd: Path) -> Optional[MissionContext]:
     """Resolve the active mission context from cwd, or None."""
+    project_root = resolve_project_root(cwd)
     try:
-        project_root = resolve_worktree_root(cwd)
         git_common = resolve_git_common_dir(cwd)
+        state_root = git_common / SHARED_STATE_DIRNAME
     except CollabError:
-        return None
-    state_root = git_common / SHARED_STATE_DIRNAME
+        state_root = _non_git_state_root(project_root)
+        git_common = state_root
     active_path = active_pointer_path(state_root)
     active = load_json(active_path, default=None)
     if not active or not isinstance(active, dict) or not active.get("mission_id"):
@@ -726,7 +753,9 @@ __all__ = [
     "repo_git",
     "research_is_required",
     "research_is_satisfied",
+    "collab_state_root_for",
     "resolve_git_common_dir",
+    "resolve_project_root",
     "resolve_worktree_root",
     "result_file",
     "save_role_result",

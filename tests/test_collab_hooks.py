@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -2573,8 +2574,257 @@ class CollabHookTests(unittest.TestCase):
                 [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--cwd", tmpdir, "verify", "--install-only"],
                 capture_output=True, text=True, check=False,
             )
-            # Should not FAIL on git check
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("Plugin installation verified", proc.stdout)
             self.assertNotIn("[FAIL] Not in a git repository", proc.stdout)
+
+    def test_146b_init_supports_non_git_project_root(self):
+        """collabctl init/status works for non-git system roots."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            codex_home = Path(tmpdir) / "codex-home"
+            env = {**os.environ, "CODEX_HOME": str(codex_home)}
+
+            init_proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "collabctl.py"),
+                    "--cwd",
+                    str(root),
+                    "init",
+                    "--objective",
+                    "Audit non-git Codex configuration",
+                    "--force",
+                    "--awaiting-user",
+                    "false",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(init_proc.returncode, 0, msg=init_proc.stderr)
+            init_payload = json.loads(init_proc.stdout)
+            manifest_path = Path(init_payload["manifest"])
+            self.assertTrue(manifest_path.exists())
+            self.assertTrue(str(manifest_path).startswith(str(codex_home)))
+            self.assertEqual(init_payload["mission_id"], json.loads(manifest_path.read_text())["mission_id"])
+            self.assertEqual(json.loads(manifest_path.read_text())["project_root"], str(root.resolve()))
+
+            status_proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "collabctl.py"),
+                    "--cwd",
+                    str(root),
+                    "status",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(status_proc.returncode, 0, msg=status_proc.stderr)
+            self.assertIn("Audit non-git Codex configuration", status_proc.stdout)
+
+    def test_146c_session_start_supports_non_git_project_root(self):
+        """SessionStart injects context for non-git missions."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            codex_home = Path(tmpdir) / "codex-home"
+            env = {**os.environ, "CODEX_HOME": str(codex_home)}
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS_DIR / "collabctl.py"),
+                    "--cwd",
+                    str(root),
+                    "init",
+                    "--objective",
+                    "Audit non-git Codex configuration",
+                    "--force",
+                    "--awaiting-user",
+                    "false",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
+            proc = subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "collab_session_start.py")],
+                input=json.dumps({"cwd": str(root)}),
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+                env=env,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            self.assertIn("Audit non-git Codex configuration", proc.stdout)
+
+    def test_146d_verify_supports_non_git_mission_state(self):
+        """collabctl verify recognizes non-git mission state support."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            env = {**os.environ, "CODEX_HOME": str(Path(tmpdir) / "codex-home")}
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS_DIR / "collabctl.py"), "--cwd", str(root), "verify"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
+            self.assertIn("Non-git mission state root", proc.stdout)
+
+    def test_146e_non_git_close_pass_allows_in_scope_changes(self):
+        """Non-git pass close allows changes covered by allowed paths."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            (root / "config").mkdir()
+            (root / "config" / "settings.json").write_text("before\n", encoding="utf-8")
+            env = {**os.environ, "CODEX_HOME": str(Path(tmpdir) / "codex-home")}
+            base = [
+                sys.executable,
+                str(SCRIPTS_DIR / "collabctl.py"),
+                "--cwd",
+                str(root),
+            ]
+            subprocess.run(
+                base + [
+                    "init",
+                    "--objective",
+                    "Audit non-git Codex configuration",
+                    "--force",
+                    "--awaiting-user",
+                    "false",
+                    "--allowed-path",
+                    "config",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
+            (root / "config" / "settings.json").write_text("after\n", encoding="utf-8")
+            closed = subprocess.run(
+                base + ["close", "pass", "--reason", "done"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(closed.returncode, 0, msg=closed.stdout + closed.stderr)
+
+    def test_146f_non_git_close_blocks_out_of_scope_changes(self):
+        """Non-git pass close blocks changes outside allowed paths."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            (root / "config").mkdir()
+            (root / "other").mkdir()
+            (root / "other" / "unexpected.txt").write_text("before\n", encoding="utf-8")
+            env = {**os.environ, "CODEX_HOME": str(Path(tmpdir) / "codex-home")}
+            base = [
+                sys.executable,
+                str(SCRIPTS_DIR / "collabctl.py"),
+                "--cwd",
+                str(root),
+            ]
+            subprocess.run(
+                base + [
+                    "init",
+                    "--objective",
+                    "Audit non-git Codex configuration",
+                    "--force",
+                    "--awaiting-user",
+                    "false",
+                    "--allowed-path",
+                    "config",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
+            (root / "other" / "unexpected.txt").write_text("after\n", encoding="utf-8")
+            blocked = subprocess.run(
+                base + ["close", "pass", "--reason", "done"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("other/unexpected.txt", blocked.stdout + blocked.stderr)
+
+            forced = subprocess.run(
+                base + ["close", "pass", "--reason", "done", "--force-close", "read-only non-git audit"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(forced.returncode, 0, msg=forced.stdout + forced.stderr)
+
+    def test_146g_non_git_close_fails_closed_when_baseline_unavailable(self):
+        """Non-git close requires force when baseline capture was unavailable."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "system-root"
+            root.mkdir()
+            (root / "config").mkdir()
+            env = {**os.environ, "CODEX_HOME": str(Path(tmpdir) / "codex-home")}
+            base = [
+                sys.executable,
+                str(SCRIPTS_DIR / "collabctl.py"),
+                "--cwd",
+                str(root),
+            ]
+            init = subprocess.run(
+                base + [
+                    "init",
+                    "--objective",
+                    "Audit non-git Codex configuration",
+                    "--force",
+                    "--awaiting-user",
+                    "false",
+                    "--allowed-path",
+                    "config",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
+            payload = json.loads(init.stdout)
+            manifest_path = Path(payload["manifest"])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["non_git_baseline"] = {
+                "type": "non_git",
+                "status": "unavailable",
+                "reason": "test baseline unavailable",
+                "files": {},
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            blocked = subprocess.run(
+                base + ["close", "pass", "--reason", "done"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("test baseline unavailable", blocked.stdout + blocked.stderr)
 
     def test_147_pyproject_toml_exists(self):
         """pyproject.toml exists at repo root."""
@@ -3124,6 +3374,138 @@ class CollabHookTests(unittest.TestCase):
         )
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("approve_with_research", proc.stderr)
+
+    def test_174_golden_path_doc_is_canonical_and_linked(self):
+        """Golden-path runbook exists and is linked from the main docs surfaces."""
+        runbook = PLUGIN_ROOT / "docs" / "collab-golden-path.md"
+        self.assertTrue(runbook.exists())
+        text = runbook.read_text(encoding="utf-8")
+        self.assertIn("/collab Golden Path", text)
+        self.assertIn("collabctl.py smoke --scenario clean-pass", text)
+        self.assertIn("collabctl.py smoke --scenario audit-loop", text)
+
+        readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
+        contributing = (PLUGIN_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        skill = (PLUGIN_ROOT / "skills" / "collab" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("docs/collab-golden-path.md", readme)
+        self.assertIn("docs/collab-golden-path.md", contributing)
+        self.assertIn("docs/collab-golden-path.md", skill)
+
+    def test_175_smoke_clean_pass_writes_summary_and_closes(self):
+        """Smoke clean-pass runs the full lifecycle and leaves no active mission."""
+        proc = self.run_ctl("smoke", "--scenario", "clean-pass")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["scenario"], "clean-pass")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["loop_count"], 0)
+        report_path = Path(payload["report_path"])
+        self.assertTrue(report_path.exists())
+        report_text = report_path.read_text(encoding="utf-8")
+        self.assertIn("## Verdict: PASS", report_text)
+
+        manifest = json.loads((report_path.parent / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["status"], "pass")
+        self.assertEqual(manifest["phase"], "pass")
+        results_dir = report_path.parent / "results"
+        test_writer = json.loads((results_dir / "test-writer.json").read_text(encoding="utf-8"))
+        security = json.loads((results_dir / "security.json").read_text(encoding="utf-8"))
+        performance = json.loads((results_dir / "performance.json").read_text(encoding="utf-8"))
+        accessibility = json.loads((results_dir / "accessibility.json").read_text(encoding="utf-8"))
+        self.assertEqual(test_writer["test_count"], 0)
+        self.assertEqual(security["scan_commands_run"], [])
+        self.assertEqual(performance["benchmarks_run"], [])
+        self.assertEqual(accessibility["a11y_commands_run"], [])
+
+        status_proc = self.run_ctl("status")
+        self.assertIn("No active /collab mission", status_proc.stdout)
+
+    def test_176_smoke_audit_loop_records_one_loop_and_passes(self):
+        """Smoke audit-loop forces one loopback and still closes pass."""
+        proc = self.run_ctl("smoke", "--scenario", "audit-loop")
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["scenario"], "audit-loop")
+        self.assertEqual(payload["status"], "pass")
+        self.assertEqual(payload["loop_count"], 1)
+        report_path = Path(payload["report_path"])
+        self.assertTrue(report_path.exists())
+        manifest = json.loads((report_path.parent / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["loop_count"], 1)
+        self.assertEqual(manifest["status"], "pass")
+
+    def test_177_run_reports_named_dispatch_targets_for_pending_phase(self):
+        """Live controller reports the exact next named role to dispatch."""
+        self.init_mission()
+        self.set_phase("implement")
+
+        proc = self.run_ctl("run", "--json")
+        payload = json.loads(proc.stdout)
+
+        self.assertEqual(payload["state"], "waiting")
+        self.assertEqual(payload["phase"], "implement")
+        self.assertEqual(payload["pending_roles"], ["implementer"])
+        self.assertEqual(payload["dispatch_roles"], [{"role": "implementer", "agent_type": "collab-implementer"}])
+
+    def test_178_run_advances_to_test_after_implementer_result(self):
+        """Live controller auto-advances to the next phase when the required result exists."""
+        self.init_mission()
+        self.set_phase("implement")
+        self.save_role_result("implementer", self.valid_role_result("implementer"))
+
+        proc = self.run_ctl("run", "--json")
+        payload = json.loads(proc.stdout)
+
+        self.assertEqual(payload["state"], "waiting")
+        self.assertEqual(payload["phase"], "test")
+        self.assertEqual(payload["pending_roles"], ["test-writer"])
+        self.assertEqual(payload["history"][0]["action"], "advance")
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["phase"], "test")
+
+    def test_179_run_loops_back_to_implement_when_audit_role_requests_changes(self):
+        """Live controller loops to implement automatically when audit fails."""
+        self.init_mission()
+        self.set_phase("audit")
+        self.save_role_result("skeptic", self.valid_role_result("skeptic"))
+        security = self.valid_role_result("security")
+        security["recommendation"] = "needs_changes"
+        security["findings"] = [{"severity": "high", "category": "auth", "issue": "Loop back required."}]
+        self.save_role_result("security", security)
+        self.save_role_result("performance", self.valid_role_result("performance"))
+        self.save_role_result("accessibility", self.valid_role_result("accessibility"))
+
+        proc = self.run_ctl("run", "--json")
+        payload = json.loads(proc.stdout)
+
+        self.assertEqual(payload["state"], "waiting")
+        self.assertEqual(payload["phase"], "implement")
+        self.assertEqual(payload["pending_roles"], ["implementer"])
+        self.assertEqual(payload["history"][0]["action"], "loopback")
+        self.assertEqual(payload["history"][0]["failed_roles"][0]["role"], "security")
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["phase"], "implement")
+        self.assertEqual(manifest["loop_count"], 1)
+
+    def test_180_run_watch_advances_when_result_arrives(self):
+        """Watch mode notices new results and advances without manual phase changes."""
+        self.init_mission()
+        self.set_phase("implement")
+
+        def delayed_result():
+            self.save_role_result("implementer", self.valid_role_result("implementer"))
+
+        timer = threading.Timer(0.2, delayed_result)
+        timer.start()
+        try:
+            proc = self.run_ctl("run", "--watch", "--timeout-seconds", "2", "--poll-interval", "0.05", "--json")
+        finally:
+            timer.cancel()
+
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["state"], "waiting")
+        self.assertEqual(payload["phase"], "test")
+        self.assertEqual(payload["pending_roles"], ["test-writer"])
+        manifest = self.load_manifest()
+        self.assertEqual(manifest["phase"], "test")
 
 
 # ── WS-4: Adapter Parity Tests (v5.0) ──
