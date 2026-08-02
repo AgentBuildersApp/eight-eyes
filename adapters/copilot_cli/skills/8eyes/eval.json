@@ -1,0 +1,630 @@
+{
+  "skill": "8eyes",
+  "version": "1.0",
+  "threshold": 0.90,
+  "validator_validation_sample": 0.10,
+  "cases": [
+    {
+      "id": "EYES-001",
+      "name": "All 8 roles execute on standard review",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review the changes in src/auth/login.ts",
+        "context": {
+          "diff": "Added new login endpoint with session handling, password validation, and rate limiting",
+          "files_changed": ["src/auth/login.ts", "src/auth/session.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Implementer",
+          "Test Writer",
+          "Skeptic",
+          "Security",
+          "Performance",
+          "Accessibility",
+          "Docs",
+          "Verifier"
+        ],
+        "output_not_contains": [
+          "LGTM",
+          "looks good to me",
+          "no issues found"
+        ],
+        "structural_checks": [
+          "All 8 reviewer role headers are present in output",
+          "Each role section contains at least one finding or explicit observation",
+          "Roles appear in consistent order"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-002",
+      "name": "Independent opinions without cross-contamination",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/api/users.ts which adds a new user CRUD endpoint",
+        "context": {
+          "diff": "New REST endpoint for user creation with email validation and database insert",
+          "files_changed": ["src/api/users.ts", "src/models/user.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Implementer",
+          "Security",
+          "Skeptic",
+          "Verifier"
+        ],
+        "output_not_contains": [
+          "as the Implementer already noted",
+          "agreeing with Security",
+          "per the above role"
+        ],
+        "structural_checks": [
+          "Each role provides its own independent analysis without referencing other roles' findings",
+          "No role defers to another role's judgment",
+          "Verifier is the only role that synthesizes across other roles"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-003",
+      "name": "Role isolation - each role stays in domain",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/components/Dashboard.tsx",
+        "context": {
+          "diff": "New React dashboard component with data fetching, chart rendering, and role-based visibility",
+          "files_changed": ["src/components/Dashboard.tsx", "src/hooks/useDashboardData.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Implementer",
+          "Performance",
+          "Accessibility",
+          "Security"
+        ],
+        "output_not_contains": [
+          "LGTM",
+          "no concerns"
+        ],
+        "structural_checks": [
+          "Security role focuses on auth/data exposure, not code style",
+          "Performance role focuses on rendering/data efficiency, not security",
+          "Accessibility role focuses on ARIA/keyboard/screen-reader, not performance",
+          "Test Writer focuses on test coverage, not documentation",
+          "Docs role focuses on documentation gaps, not test coverage"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-004",
+      "name": "Findings reference specific file and line numbers",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/payments/charge.ts",
+        "context": {
+          "diff": "New payment processing function with Stripe integration, error handling, and logging",
+          "files_changed": ["src/payments/charge.ts"],
+          "language": "typescript",
+          "line_count": 120
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "charge.ts"
+        ],
+        "output_not_contains": [
+          "somewhere in the code",
+          "in general",
+          "the code should"
+        ],
+        "structural_checks": [
+          "At least 3 findings reference specific file names",
+          "At least 2 findings reference specific line numbers or line ranges",
+          "Findings quote or reference actual code constructs (function names, variable names, patterns)"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-005",
+      "name": "Severity levels assigned to findings",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/db/migrate.ts which adds a new database migration",
+        "context": {
+          "diff": "Migration adding user_sessions table with raw SQL, no rollback, and hardcoded timeout",
+          "files_changed": ["src/db/migrate.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Severity",
+          "Critical",
+          "High"
+        ],
+        "output_not_contains": [
+          "LGTM",
+          "no issues",
+          "approved without reservations"
+        ],
+        "structural_checks": [
+          "Each finding includes a severity classification (Critical, High, Medium, Low, Info)",
+          "Critical or High severity used for missing rollback and hardcoded values",
+          "Severity ratings are justified with reasoning, not arbitrary"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-006",
+      "name": "Evidence-backed findings with concrete examples",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/utils/sanitize.ts",
+        "context": {
+          "diff": "Input sanitization utility using regex replacement, handling HTML, SQL, and shell input",
+          "files_changed": ["src/utils/sanitize.ts"],
+          "language": "typescript",
+          "line_count": 85
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "sanitize.ts"
+        ],
+        "output_not_contains": [
+          "might be an issue",
+          "could potentially",
+          "it seems like"
+        ],
+        "structural_checks": [
+          "Findings include specific code references or patterns as evidence",
+          "Security findings cite concrete attack vectors or bypass scenarios",
+          "Recommendations include actionable fix suggestions, not vague advice"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-007",
+      "name": "Security role identifies vulnerability classes",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/api/upload.ts",
+        "context": {
+          "diff": "File upload endpoint accepting multipart form data, saving to disk with user-provided filename, no size limit, serves files back via direct path",
+          "files_changed": ["src/api/upload.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Security",
+          "path traversal",
+          "Critical"
+        ],
+        "output_not_contains": [
+          "no security concerns",
+          "looks secure",
+          "LGTM"
+        ],
+        "structural_checks": [
+          "Security role identifies path traversal / directory traversal vulnerability",
+          "Security role flags unrestricted file upload (size and type)",
+          "Security role identifies direct file serving as information disclosure risk",
+          "Findings reference specific OWASP categories or CWE identifiers where applicable",
+          "At least one finding rated Critical or High severity"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-008",
+      "name": "Security role demonstrates OWASP awareness",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/auth/jwt.ts",
+        "context": {
+          "diff": "JWT token generation using HS256 with secret from environment variable, no expiration set, token stored in localStorage, no CSRF protection on token refresh endpoint",
+          "files_changed": ["src/auth/jwt.ts", "src/auth/refresh.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Security",
+          "expiration",
+          "localStorage",
+          "CSRF"
+        ],
+        "output_not_contains": [
+          "implementation looks correct",
+          "no security issues",
+          "standard approach"
+        ],
+        "structural_checks": [
+          "Security role flags missing token expiration as High/Critical",
+          "Security role identifies localStorage token storage as XSS risk",
+          "Security role flags missing CSRF protection on state-changing endpoint",
+          "Findings reference OWASP Top 10 categories (Broken Authentication, Security Misconfiguration)",
+          "Security role recommends specific mitigations (httpOnly cookies, token rotation, expiry)"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-009",
+      "name": "Skeptic challenges assumptions and design decisions",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/cache/redis.ts",
+        "context": {
+          "diff": "Redis caching layer with no TTL defaults, no eviction policy, assumes Redis is always available, no fallback, catches all errors silently",
+          "files_changed": ["src/cache/redis.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Skeptic",
+          "assumption",
+          "fallback"
+        ],
+        "output_not_contains": [
+          "reasonable approach",
+          "no concerns",
+          "well designed"
+        ],
+        "structural_checks": [
+          "Skeptic challenges the assumption that Redis is always available",
+          "Skeptic questions silent error swallowing as hiding failures",
+          "Skeptic raises missing TTL/eviction as unbounded memory growth risk",
+          "Skeptic asks pointed questions rather than just agreeing",
+          "Skeptic does not defer to other roles or rubber-stamp the implementation"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-010",
+      "name": "Skeptic refuses to rubber-stamp clean-looking code",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/services/notification.ts",
+        "context": {
+          "diff": "Well-formatted notification service with typed interfaces, async/await, proper error handling, but no retry logic, no idempotency, no dead letter queue, and tight coupling to a single provider",
+          "files_changed": ["src/services/notification.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Skeptic"
+        ],
+        "output_not_contains": [
+          "LGTM",
+          "clean code",
+          "no issues",
+          "well implemented",
+          "approved"
+        ],
+        "structural_checks": [
+          "Skeptic identifies at least 2 architectural concerns despite clean formatting",
+          "Skeptic questions missing retry/idempotency for a notification system",
+          "Skeptic challenges single-provider coupling as a reliability risk",
+          "Skeptic distinguishes between code quality and design quality"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-011",
+      "name": "Verifier synthesizes all roles into coherent verdict",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/api/orders.ts",
+        "context": {
+          "diff": "Order processing endpoint with payment integration, inventory check, email notification, database transaction, but missing input validation and no rate limiting",
+          "files_changed": ["src/api/orders.ts", "src/services/inventory.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Verifier",
+          "BLOCK"
+        ],
+        "output_not_contains": [
+          "LGTM",
+          "approved without changes"
+        ],
+        "structural_checks": [
+          "Verifier section appears last, after all other roles",
+          "Verifier references findings from multiple other roles in its synthesis",
+          "Verifier provides a clear BLOCK or PASS verdict",
+          "Verdict includes justification citing the most critical findings",
+          "Verifier identifies the minimum changes required before re-review"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-012",
+      "name": "Verifier issues PASS with conditions when appropriate",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/utils/format.ts",
+        "context": {
+          "diff": "String formatting utility with proper input validation, typed parameters, comprehensive JSDoc, handles edge cases, but missing unit tests and one unused import",
+          "files_changed": ["src/utils/format.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Verifier",
+          "PASS"
+        ],
+        "output_not_contains": [
+          "no issues whatsoever",
+          "perfect implementation",
+          "LGTM"
+        ],
+        "structural_checks": [
+          "Verifier issues PASS verdict (not BLOCK) for low-severity-only findings",
+          "Verifier still notes conditions or follow-up items despite passing",
+          "Verifier distinguishes blocking issues from non-blocking recommendations",
+          "Test Writer role flags missing unit tests as a finding",
+          "Verdict acknowledges the low-risk nature while noting improvements"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-013",
+      "name": "Performance role identifies complexity and bottlenecks",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/search/fuzzy.ts",
+        "context": {
+          "diff": "Fuzzy search implementation using nested loops over full dataset, string concatenation in hot path, no caching, regex compilation inside loop, synchronous file reads in request handler",
+          "files_changed": ["src/search/fuzzy.ts"],
+          "language": "typescript",
+          "line_count": 200
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Performance",
+          "O(n"
+        ],
+        "output_not_contains": [
+          "performance is acceptable",
+          "no performance concerns",
+          "efficient implementation"
+        ],
+        "structural_checks": [
+          "Performance role identifies nested loop as O(n^2) or worse complexity",
+          "Performance role flags string concatenation in hot path",
+          "Performance role identifies regex compilation inside loop as avoidable overhead",
+          "Performance role flags synchronous file I/O in request handler as blocking",
+          "Performance role recommends specific optimizations (caching, precompilation, async I/O)",
+          "At least one finding includes complexity analysis notation"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-014",
+      "name": "Single-role mode with --role flag",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes --role Security review src/auth/oauth.ts",
+        "context": {
+          "diff": "OAuth2 implementation with PKCE flow, token storage, and callback handling",
+          "files_changed": ["src/auth/oauth.ts"],
+          "language": "typescript"
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "Security"
+        ],
+        "output_not_contains": [
+          "Implementer",
+          "Test Writer",
+          "Accessibility",
+          "Docs"
+        ],
+        "structural_checks": [
+          "Only the Security role section is present in output",
+          "No other role headers appear (Implementer, Test Writer, Skeptic, Performance, Accessibility, Docs)",
+          "Verifier section is omitted or reduced to a single-role summary",
+          "Security analysis depth is at least as thorough as in full 8-role mode",
+          "Output is significantly shorter than a full 8-role review"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-015",
+      "name": "Graceful degradation when target has no changes",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/config/constants.ts",
+        "context": {
+          "diff": "",
+          "files_changed": [],
+          "language": "typescript",
+          "no_changes": true
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "no changes"
+        ],
+        "output_not_contains": [
+          "Critical",
+          "High",
+          "BLOCK",
+          "vulnerability",
+          "Traceback",
+          "undefined",
+          "NullPointerException"
+        ],
+        "structural_checks": [
+          "Skill handles empty diff gracefully without crashing or throwing errors",
+          "Output clearly communicates that no changes were detected for review",
+          "No fabricated findings are generated for nonexistent code changes",
+          "Suggests user verify the target or provide a valid diff",
+          "Does not produce full 8-role review output for empty input"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": ""
+    },
+    {
+      "id": "EYES-016",
+      "name": "GLM 5.1 accepted as Implementer-alt or Test Writer-alt role",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/utils/parser.ts with --include-glm filling Implementer-alt role",
+        "context": {
+          "diff": "Pure-function string parser with no PII, no auth, no network I/O — touches only local in-memory data structures",
+          "files_changed": ["src/utils/parser.ts"],
+          "language": "typescript",
+          "vendor_assignments": {
+            "Implementer-alt": "glm-5.1",
+            "Test Writer-alt": "glm-5.1"
+          },
+          "data_classification": "non_customer",
+          "include_glm": true
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "GLM",
+          "Implementer-alt",
+          "Test Writer-alt"
+        ],
+        "output_not_contains": [
+          "GLM rejected",
+          "GLM excluded",
+          "vendor not permitted"
+        ],
+        "structural_checks": [
+          "GLM 5.1 is permitted as Implementer-alt role-fill on non-customer-data path",
+          "GLM 5.1 is permitted as Test Writer-alt role-fill on non-customer-data path",
+          "Vendor diversity preserved (GLM does not also fill Skeptic or Verifier in same review)",
+          "Recusal manifest entry for GLM is present and validates against schema v1.2"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": "Per /collab consensus 2026-05-01 Q1: GLM is allow-listed for Implementer-alt and Test Writer-alt roles only."
+    },
+    {
+      "id": "EYES-017",
+      "name": "GLM 5.1 hard-rejected from Security and Threat Modeler roles",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/auth/session.ts with --include-glm proposed for Security role",
+        "context": {
+          "diff": "Session token generation, refresh, and revocation logic with cookie handling",
+          "files_changed": ["src/auth/session.ts"],
+          "language": "typescript",
+          "vendor_assignments": {
+            "Security": "glm-5.1"
+          },
+          "data_classification": "non_customer",
+          "include_glm": true
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "GLM",
+          "rejected",
+          "Security"
+        ],
+        "output_not_contains": [
+          "GLM accepted as Security",
+          "GLM accepted as Threat Modeler",
+          "proceeding with GLM Security review"
+        ],
+        "structural_checks": [
+          "GLM 5.1 is HARD-REJECTED from Security role per consensus Q1 hard exclusion",
+          "GLM 5.1 is HARD-REJECTED from Threat Modeler role per consensus Q1 hard exclusion",
+          "Rejection cites the recusal manifest / hard-exclusion policy, not generic vendor preference",
+          "Reviewer fallback or substitution is proposed (e.g., reassign to Claude/Codex/Gemini)",
+          "Pipeline does not silently downgrade — rejection is surfaced to the user"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": "Per /collab consensus 2026-05-01 Q1: Security and Threat Modeler are hard-exclusion roles for GLM regardless of data path."
+    },
+    {
+      "id": "EYES-018",
+      "name": "GLM 5.1 hard-rejected on customer-data paths (T1 data classification)",
+      "type": "behavioral",
+      "input": {
+        "prompt": "/8eyes review src/vettara/customer_records.ts with --include-glm proposed for any role",
+        "context": {
+          "diff": "Customer-record query and write path for Vettara T1 customer data — touches PII and tenant boundaries",
+          "files_changed": ["src/vettara/customer_records.ts"],
+          "language": "typescript",
+          "vendor_assignments": {
+            "Implementer-alt": "glm-5.1"
+          },
+          "data_classification": "customer_data_t1",
+          "product": "vettara",
+          "include_glm": true
+        }
+      },
+      "expected": {
+        "output_contains": [
+          "GLM",
+          "rejected",
+          "customer"
+        ],
+        "output_not_contains": [
+          "GLM accepted",
+          "proceeding with GLM",
+          "customer data review by GLM"
+        ],
+        "structural_checks": [
+          "GLM 5.1 is HARD-REJECTED on T1 customer-data path regardless of proposed role",
+          "Rejection cites customer-data hard-exclusion policy (Vettara/Attestra T1)",
+          "Both Implementer-alt and Test Writer-alt assignments are blocked when data_classification=customer_data_t1",
+          "User-facing message explains the data-classification gate, not just role mismatch",
+          "Fallback to Claude/Codex/Gemini for the role is proposed"
+        ]
+      },
+      "human_validated": false,
+      "validation_notes": "Per /collab consensus 2026-05-01 Q1: T1 customer data (Vettara, Attestra) is a hard exclusion for GLM regardless of role."
+    }
+  ]
+}

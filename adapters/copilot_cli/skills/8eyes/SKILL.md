@@ -1,171 +1,132 @@
 ---
 name: 8eyes
-description: >
-  Start a failure-aware multi-agent code review with 8 constrained roles.
-  Activate when the user invokes `/8eyes <objective>` or requests a
-  multi-agent review, implementation, or audit mission.
+description: Multi-agent adversarial code review via eight-eyes enforcement kernel
+triggers: ["/8eyes"]
+version: "4.2.0"
+author: "AgentBuildersApp"
+category: "review"
+tags: ['#code-review', '#multi-agent', '#enforcement']
 ---
 
-> Eight constrained reviewers. Each scoped to a different failure surface.
+# /8eyes - Multi-Agent Code Review
 
-# collab -- Coordinator Instructions
+**Trigger**: `/8eyes [target]`
+**Version**: 4.2.0 — Verifiable Enforcement (installed plugin version)
 
-You are the **coordinator** of a collab mission.  Your job is to drive an
-objective through a sequence of phases, dispatching specialized subagent
-roles and collecting their results.
+## Overview
 
-## When to Activate
+Eight constrained reviewer roles with hook-enforced isolation. Prevents AI reviewer consensus failure through architectural enforcement.
 
-- User runs `/collab <objective>`
-- User explicitly asks for multi-agent review, implementation, or audit
-- User requests consensus from multiple specialist perspectives
+## Roles
 
-## Trust Level
+<!-- VON-1408 P2 roster shifts 2026-05-02 — min-1-Eastern requirement + Kimi role eligibility -->
 
-The coordinator is **trusted**.  You have full tool access with no scope
-enforcement.  Hook-based scope enforcement applies only to subagent roles.
+| Role | Focus | GLM 5.1 Eligible? | Kimi K2.6 Eligible? |
+|------|-------|-------------------|---------------------|
+| Implementer | Code correctness, logic | YES (alt — opt-in) | NO (default vendor stays) |
+| Test Writer | Test coverage, edge cases | YES (alt — opt-in) | NO (default vendor stays) |
+| Skeptic | Adversarial review, assumptions | NO (MiniMax canonical Skeptic) | NO (MiniMax canonical Skeptic) |
+| Security | Vulnerabilities, auth, secrets | **NO — HARD EXCLUSION** | **NO — HARD EXCLUSION** |
+| Performance | Bottlenecks, complexity | NO (default vendor stays) | NO (default vendor stays) |
+| Accessibility | WCAG compliance, UX | NO (default vendor stays) | NO (default vendor stays) |
+| Docs | Documentation completeness | NO (default vendor stays) | NO (default vendor stays) |
+| Verifier | Final sign-off, integration | NO (default vendor stays) | NO (default vendor stays) |
+| Long-Context Reviewer (opt-in) | Cross-file architectural review when target spans 5-15 files | YES — GLM 200K context lane | YES — Kimi long-horizon lane |
+| Architect-alt (opt-in) | Cross-module architectural reasoning, large-design review | NO (default vendor stays) | YES — Kimi long-context architect lane |
 
----
+### Min-1-Eastern Requirement (VON-1408 P2)
 
-## Phase Ordering
+When invoking /8eyes by default (no operator-supplied `--role` overrides), **at least 1 of the 8
+default reviewer roles MUST be filled by an Eastern model (Kimi, MiniMax, or GLM)**, unless the
+governance-locked hard exclusions apply (see below). This requirement is satisfied automatically
+because MiniMax already canonically fills the Skeptic role; the requirement only forces visible
+review when an operator attempts to override the default skeptic with a Western model.
 
-Every mission follows this phase sequence:
+**Hard exclusions UNCHANGED — these roles can NEVER be filled by an Eastern model**:
+- **Security role** — no published Eastern-vendor security benchmarks; new-vendor track records short
+- **Threat Modeler** (any sub-role of Skeptic that performs threat modeling)
+- **Customer-data paths** (any review touching Vettara/Attestra T1 customer data)
+- **Billing-critical or auth-critical code paths**
+
+When the target review intersects a hard-exclusion lane, /8eyes routes the affected role(s) to a
+Western model and the min-1-Eastern requirement is waived for the affected portion.
+
+<!-- VON-1399 GLM integration 2026-05-01 -->
+### GLM 5.1 Role-Fill Policy
+
+GLM 5.1 is OPT-IN as an alternative role-fill where MiniMax/Codex would otherwise be reused. Default reviewer roster is unchanged — GLM is invoked only when explicitly selected.
+
+**GLM eligible roles**: Implementer-alt, Test Writer-alt, Long-Context Reviewer.
+
+**GLM HARD EXCLUSIONS (per /collab consensus 2026-05-01 Q1, REAFFIRMED VON-1408 P2)**:
+- **Security role** — no published GLM security benchmark; new-vendor track record short
+- **Threat Modeler** (any sub-role of Skeptic that performs threat modeling)
+- **Any review touching Vettara/Attestra customer data** — GLM is T2/T4 PERMITTED, NEVER T1 customer data
+- **Billing-critical or auth-critical code paths**
+
+GLM is also recused under Law #31 (cross-vendor recusal): GLM cannot review work GLM built. Invocation flows through `~/.claude/session-tools/zai_client.py` (vendor=glm, model=glm-5.1).
+
+### Kimi K2.6 Role-Fill Policy (VON-1408 P2 Q2)
+
+Kimi K2.6 is OPT-IN for two specific roles where its long-context strengths add signal:
+- **Long-Context Reviewer** — cross-file architectural review (200K+ context lane, peer to GLM)
+- **Architect-alt** — large-design review where Kimi's long-horizon reasoning helps trace
+  cross-module dependencies that fit-in-window for fewer Western models
+
+**Kimi HARD EXCLUSIONS (same as GLM, per /collab consensus 2026-05-01 Q1)**: Security role,
+Threat Modeler, customer-data paths, billing-/auth-critical code. Kimi is also subject to
+Law #31 cross-vendor recusal: Kimi cannot review work Kimi built.
+
+## Usage
 
 ```
-plan -> implement -> test -> audit -> verify -> [docs] -> close
+/8eyes                    # Review current changes
+/8eyes src/auth/          # Review specific directory
+/8eyes --role security    # Single-role review
 ```
 
-Legacy sequential phases remain available for backward compatibility:
+## Integration
 
-```
-plan -> implement -> test -> review -> [security] -> [performance] -> [accessibility] -> verify -> [docs] -> close
-```
+This skill wraps the eight-eyes plugin installed at:
+`~/.claude/plugins/cache/8eyes-marketplace/8eyes/4.2.0/`
 
-Phases in brackets are **optional**.  You decide which optional phases to
-include based on:
+Installed plugin version: 4.2.0 (per `.claude-plugin/plugin.json`).
+Dev source repo: ~/eight-eyes/ (active development; `pytest --collect-only` reports 184 tests).
+Note: the installed-plugin version (4.2.0) and the dev-source-repo are distinct — the dev repo may be ahead of the published/installed plugin.
 
-| Optional Phase | Include When |
-|----------------|-------------|
-| security | Objective touches auth, secrets, user input, network, or crypto |
-| performance | Objective involves data processing, queries, rendering, or loops |
-| accessibility | Objective involves UI, frontend, or user-facing output |
-| docs | Objective changes public APIs, configuration, or user-facing behavior |
+For full documentation, see ~/eight-eyes/README.md
 
-You MUST always include: `plan`, `implement`, `test`, `review`, `verify`.
+## ALS INTEGRATION (Wave 3)
 
----
+After completing review, feed top findings to the Adaptive Learning System.
 
-## Role Selection
+### When to Feed
 
-| Role | Agent File | Dispatch In Phase |
-|------|-----------|-------------------|
-| implementer | `collab-implementer` | `implement` |
-| test-writer | `collab-test-writer` | `test` |
-| skeptic | `collab-skeptic` | `audit` or `review` |
-| security | `collab-security` | `audit` or `security` |
-| performance | `collab-performance` | `audit` or `performance` |
-| accessibility | `collab-accessibility` | `audit` or `accessibility` |
-| docs | `collab-docs` | `docs` |
-| verifier | `collab-verifier` | `verify` |
+| Event | Claim Template | Category |
+|-------|---------------|----------|
+| Review PASS | "8eyes review PASS for [target]: [top strength noted]" | governance |
+| Review CONDITIONAL | "8eyes CONDITIONAL for [target]: [conditions from roles]" | governance |
+| HIGH finding | "[Role]: [finding] in [target]" | quality |
+| Security finding | "Security: [vulnerability] in [target]" | quality |
 
-Each role runs as a subagent.  You dispatch one role per phase (except
-`plan`, which you handle yourself), unless the mission is in `audit`.
+### How to Feed
 
-During the audit phase, dispatch all 4 review agents in a SINGLE message:
-- collab-skeptic (blind review)
-- collab-security (if security_scan_commands configured)
-- collab-performance (if benchmark_commands configured)
-- collab-accessibility (if a11y_commands configured)
-
-All 4 run in parallel. Collect all results before advancing to verify.
-If any recommend needs_changes or abort, loop back to implement.
-
----
-
-## State Management with collabctl
-
-Use `collabctl` to manage mission state:
+After review completes, feed top 3 findings by severity via Bash:
 
 ```bash
-collabctl init "<objective>"        # start mission, enter plan phase
-collabctl phase implement           # advance to implement phase
-collabctl phase test                # advance to test phase
-collabctl show                      # inspect current state
-collabctl progress                  # see completed/remaining phases
-collabctl close pass                # mission succeeded
-collabctl close abort               # mission failed
+echo '{"source_skill":"8eyes","claim":"Security: SQL injection vector in user search endpoint via unsanitized query parameter","evidence":"8eyes Security role: user_search.py:45 interpolates req.query directly into SQL. Confirmed by Skeptic role cross-examination.","category":"quality"}' | python3 ~/.claude/session-tools/als_feed.py store
 ```
 
-Always advance the phase BEFORE dispatching the role for that phase.
-Always call `collabctl show` after a role completes to confirm the result
-was recorded.
+### When to Consume
 
----
+At review start, query known patterns for the target area:
 
-## Handling Role Failures
-
-When a role returns a failure result:
-
-1. Read the failure details from `.git/claude-collab/results/<role>.json`.
-2. Decide whether the failure is recoverable:
-   - **Recoverable**: loop back to the appropriate earlier phase.
-     For example, if the skeptic finds a bug, loop back to `implement`.
-   - **Unrecoverable**: close the mission with `collabctl close abort`.
-3. Do NOT loop more than **3 times** on the same phase.  After 3 attempts,
-   abort and report the persistent failure to the user.
-
-Loop rules:
-- `audit` failure -> loop to `implement`
-- `review` failure -> loop to `implement`
-- `test` failure -> loop to `implement`
-- `security` failure -> loop to `implement`
-- `verify` failure -> loop to `implement` (or `test` if test-related)
-- `performance` failure -> loop to `implement`
-- `accessibility` failure -> loop to `implement`
-
----
-
-## Handling Compaction Recovery
-
-If the session is compacted (context window trimmed), the `PreCompact` hook
-snapshots mission state to `.git/claude-collab/manifest.json`.  On session
-resume, the `SessionStart` hook injects the manifest back into context.
-
-After compaction recovery:
-1. Run `collabctl show` to reload current state.
-2. Resume from the current phase.
-3. Do NOT restart the mission from the beginning.
-
----
-
-## Result Schema
-
-Every role writes its result to `.git/claude-collab/results/<role>.json`
-with this schema:
-
-```json
-{
-  "role": "<role-name>",
-  "phase": "<phase-name>",
-  "status": "pass | fail | warn",
-  "summary": "<one-line summary>",
-  "findings": ["<finding-1>", "<finding-2>"],
-  "files_touched": ["<path>", ...],
-  "timestamp": "<ISO-8601>"
-}
+```bash
+echo '{"category":"quality","min_confidence":0.50,"limit":5,"exclude_skill":"8eyes"}' | python3 ~/.claude/session-tools/als_feed.py query
 ```
 
----
-
-## Mission Lifecycle
-
-1. User invokes `/collab <objective>`.
-2. You run `collabctl init "<objective>"` to create the manifest.
-3. You handle the `plan` phase yourself: analyze the objective, decide
-   which optional phases to include, and list the files in scope.
-4. For each subsequent phase, advance with `collabctl phase <name>`,
-   dispatch the role subagent, and collect its result. In `audit`, dispatch
-   the 4 review agents together and wait for all 4 result files.
-5. After all phases complete, run `collabctl close pass` (or `abort`).
-6. Report the mission summary to the user.
-
+### Rules
+- Feed only HIGH severity findings (not medium/low)
+- Maximum 3 learnings per review (top findings only)
+- Include which role found it and if cross-examination confirmed it
+- Fail-open: if als_feed.py fails, continue /8eyes execution normally
